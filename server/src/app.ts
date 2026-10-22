@@ -54,6 +54,11 @@ function createBalanceProvider(config: ServerConfig): BalanceProvider {
   return config.mode === 'mock' ? new MockBalances() : new RpcBalances(config.rpcUrl, config.token.mint!);
 }
 
+/** Fastify ignores a numeric trustProxy (fail-closed), so a hop count becomes a trust function. */
+function trustProxyOption(value: ServerConfig['trustProxy']): false | string | ((address: string, hop: number) => boolean) {
+  return typeof value === 'number' ? (_address, hop) => hop < value : value;
+}
+
 function restoreGame(loaded: LoadedState | null, config: ServerConfig, startedAt: number): Game {
   if (!loaded) return new Game(config.canvasWidth, config.canvasHeight, startedAt);
   const { state, colors, owners, times, log } = loaded;
@@ -68,7 +73,7 @@ export async function createApp(opts: AppOptions): Promise<PixelApp> {
 
   const http = fastify({
     logger: opts.logger ?? false,
-    trustProxy: config.trustProxy,
+    trustProxy: trustProxyOption(config.trustProxy),
     bodyLimit: BODY_LIMIT_BYTES,
     logController: new LogController({ disableRequestLogging: true }),
   });

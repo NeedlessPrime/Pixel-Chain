@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { isIP } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -19,8 +20,11 @@ export interface ServerConfig {
   sessionSecret: string | null;
   /** null = admin API disabled. */
   adminToken: string | null;
-  /** Trust X-Forwarded-* headers (client IP for rate limits, Host for the login message). */
-  trustProxy: boolean;
+  /**
+   * Whom to trust for X-Forwarded-* (client IP for rate limits, Host for the login message):
+   * false = nobody, a number = that many proxy hops in front, a string = comma-separated proxy IPs/CIDRs.
+   */
+  trustProxy: false | number | string;
   token: { symbol: string; mint: string | null; buyUrl: string | null };
   rpcUrl: string;
   balanceTtlMs: number;
@@ -115,6 +119,47 @@ function parseLogoPath(env: Env): string | null {
   return existsSync(fallback) ? fallback : null;
 }
 
+/** Address presets understood by proxy-addr. */
+const PROXY_PRESETS = ['loopback', 'linklocal', 'uniquelocal'];
+
+function isIpOrCidr(value: string): boolean {
+  const [ip = '', bits, extra] = value.split('/');
+  const version = isIP(ip);
+  if (!version || extra !== undefined) return false;
+  return bits === undefined || (/^\d{1,3}$/.test(bits) && Number(bits) <= (version === 4 ? 32 : 128));
+}
+
+/** Never `true`: trusting every hop would let any client pick its own IP with X-Forwarded-For. */
+function parseTrustProxy(env: Env): false | number | string {
+  const raw = str(env, 'TRUST_PROXY');
+  if (raw === undefined || raw === '0' || raw.toLowerCase() === 'false') return false;
+  if (/^\d+$/.test(raw)) return Number(raw);
+  const entries = raw.split(',').map((s) => s.trim());
+  if (!entries.every((e) => PROXY_PRESETS.includes(e) || isIpOrCidr(e))) {
+    throw new ConfigError(
+      `TRUST_PROXY must be the number of proxies in front of the server (usually 1) or a comma-separated list of proxy IPs/CIDRs (got "${raw}")`,
+    );
+  }
+  return entries.join(',');
+}
+
+function parseAdminToken(env: Env): string | null {
+  const token = str(env, 'ADMIN_TOKEN');
+  if (token === undefined) return null;
+  if (token === 'change-me' || token.length < 16) {
+    throw new ConfigError('ADMIN_TOKEN must be a long random string (16+ characters, e.g. `openssl rand -hex 24`), or empty to disable /admin');
+  }
+  return token;
+}
+
+function parseSessionSecret(env: Env): string | null {
+  const secret = str(env, 'SESSION_SECRET');
+  if (secret !== undefined && secret.length < 32) {
+    throw new ConfigError('SESSION_SECRET must be at least 32 characters (e.g. `openssl rand -hex 32`), or unset to keep a random one in DATA_DIR/secret');
+  }
+  return secret ?? null;
+}
+
 function parseMint(env: Env, mode: Mode): string | null {
   const mint = str(env, 'TOKEN_MINT') ?? null;
   if (mint && !isValidWallet(mint)) throw new ConfigError('TOKEN_MINT is not a valid Solana address');
@@ -124,7 +169,8 @@ function parseMint(env: Env, mode: Mode): string | null {
 
 /** Reads and validates the environment. Throws ConfigError with a readable message. */
 export function loadConfig(env: Env = process.env): ServerConfig {
-  const mode = oneOf(env, 'MODE', ['mock', 'live'] as const, 'mock');
+  // A mint means real balances, unless MODE=mock is asked for explicitly.
+  const mode = oneOf(env, 'MODE', ['mock', 'live'] as const, str(env, 'TOKEN_MINT') ? 'live' : 'mock');
   const mint = parseMint(env, mode);
   const sizeOpts = { min: 1, max: MAX_CANVAS_SIZE, integer: true };
   const themes = list(env, 'SEASON_THEMES') ?? DEFAULT_THEMES;
@@ -136,9 +182,9 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     mode,
     dataDir: path.resolve(str(env, 'DATA_DIR') ?? path.join(SERVER_ROOT, 'data')),
     publicDomain: str(env, 'PUBLIC_DOMAIN') ?? null,
-    sessionSecret: str(env, 'SESSION_SECRET') ?? null,
-    adminToken: str(env, 'ADMIN_TOKEN') ?? null,
-    trustProxy: str(env, 'TRUST_PROXY') === '1' || str(env, 'TRUST_PROXY') === 'true',
+    sessionSecret: parseSessionSecret(env),
+    adminToken: parseAdminToken(env),
+    trustProxy: parseTrustProxy(env),
     token: {
       symbol: str(env, 'TOKEN_SYMBOL') ?? '$PIXEL',
       mint,

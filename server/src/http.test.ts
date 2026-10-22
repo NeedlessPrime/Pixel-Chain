@@ -58,6 +58,20 @@ describe('auth routes', () => {
     expect([limited.statusCode, limited.json().error]).toEqual([429, 'rate_limited']);
     expect((await app.http.inject('/api/health')).statusCode).toBe(200);
   });
+
+  it('behind TRUST_PROXY=1, limits the client IP the proxy appended, whatever the client put before it', async () => {
+    app = await startTestApp({ env: { TRUST_PROXY: '1' } });
+    const wallet = newWallet().wallet;
+    const nonce = (realIp: string, spoofed: string) => app.http.inject({
+      method: 'POST', url: '/api/auth/nonce', payload: { wallet }, remoteAddress: '10.0.0.2',
+      headers: { 'x-forwarded-for': `${spoofed}, ${realIp}` },
+    });
+    const statuses = [];
+    for (let i = 0; i < 12; i++) statuses.push((await nonce('203.0.113.7', `6.6.6.${i}`)).statusCode);
+    expect(statuses).toEqual([...Array(10).fill(200), 429, 429]);
+    // Another player behind the same proxy has its own counter.
+    expect((await nonce('198.51.100.9', '6.6.6.6')).statusCode).toBe(200);
+  });
 });
 
 describe('player routes', () => {

@@ -24,6 +24,12 @@ async function main(): Promise<void> {
       `season=${app.season.id} (${app.season.state.status})`,
   );
   if (config.mode === 'live' && !config.sessionSecret) log.warn('SESSION_SECRET is not set: using the one stored in DATA_DIR/secret');
+  if (config.mode === 'mock' && config.token.mint) {
+    log.warn(
+      '!!! MODE=mock with TOKEN_MINT set: balances are FAKE and anyone can give themselves any balance via ' +
+        '/api/dev/balance. Remove MODE=mock (a mint defaults to live) before opening the server to players. !!!',
+    );
+  }
 
   let stopping = false;
   const shutdown = async (signal: string) => {
