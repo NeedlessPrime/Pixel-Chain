@@ -129,10 +129,63 @@ describe('season lifecycle (fake clock)', () => {
       await app.service.endSeason();
       const timelapsePath = path.join(app.dir, 'archive', 's1', 'timelapse.bin');
       const before = decodeTimelapse(new Uint8Array(await readFile(timelapsePath))).count;
+      const served = await app.http.inject('/api/seasons/s1/timelapse.bin');
+      const etag = served.headers.etag as string;
+      expect(served.headers['cache-control']).toBe('no-cache');
+      expect(served.rawPayload).toEqual(await readFile(timelapsePath));
+      const revalidated = await app.http.inject({ url: '/api/seasons/s1/timelapse.bin', headers: { 'if-none-match': etag } });
+      expect([revalidated.statusCode, revalidated.rawPayload.length]).toEqual([304, 0]);
+
       expect(await app.service.wipe(0, 0, 1, 1)).toBe(1);
       const after = new Uint8Array(await readFile(timelapsePath));
       expect(decodeTimelapse(after).count).toBe(before - 1);
       expect(replay(after)).toEqual(app.game.colors);
+      // A browser revalidating its copy gets the re-rendered file.
+      const fresh = await app.http.inject({ url: '/api/seasons/s1/timelapse.bin', headers: { 'if-none-match': etag } });
+      expect(fresh.statusCode).toBe(200);
+      expect(fresh.headers.etag).not.toBe(etag);
+      expect(new Uint8Array(fresh.rawPayload)).toEqual(after);
+    } finally {
+      await app.dispose();
+    }
+  });
+
+  it('removes a wallet banned during the break from the Hall of Fame, even without a wipe', async () => {
+    const app = await startTestApp();
+    try {
+      const [bad, good] = [newWallet().wallet, newWallet().wallet];
+      for (const w of [bad, good]) app.service.setMockBalance(w, 1e6);
+      await app.service.place(bad, 0, 0, 3);
+      await app.service.place(good, 1, 0, 4);
+      app.clock.advance(5_000);
+      await app.service.place(bad, 2, 0, 3);
+      await app.service.endSeason();
+      const top = async () => (await app.http.inject('/api/seasons')).json()[0].topPlayers.map((p: { wallet: string }) => p.wallet);
+      expect(await top()).toEqual([bad, good]);
+
+      const res = await app.http.inject({ method: 'POST', url: '/api/admin/ban', headers: ADMIN, payload: { wallet: bad } });
+      expect(res.json()).toEqual({ ok: true, erased: 0 });
+      expect(await top()).toEqual([good]);
+      const meta = JSON.parse(await readFile(path.join(app.dir, 'archive', 's1', 'meta.json'), 'utf8'));
+      expect(meta.topPlayers.map((p: { wallet: string }) => p.wallet)).toEqual([good]);
+      expect(meta.uniquePlayers).toBe(1);
+    } finally {
+      await app.dispose();
+    }
+  });
+
+  it('hides wallets banned after an older season from its top players', async () => {
+    const app = await startTestApp();
+    try {
+      const bad = newWallet().wallet;
+      app.service.setMockBalance(bad, 1e6);
+      await app.service.place(bad, 0, 0, 3);
+      await app.service.endSeason();
+      app.service.startSeason();
+      await app.service.ban(bad, false);
+      expect((await app.http.inject('/api/seasons')).json()[0].topPlayers).toEqual([]);
+      app.service.unban(bad);
+      expect((await app.http.inject('/api/seasons')).json()[0].topPlayers).toMatchObject([{ wallet: bad }]);
     } finally {
       await app.dispose();
     }

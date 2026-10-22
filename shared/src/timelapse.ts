@@ -18,16 +18,22 @@ export const TIMELAPSE_RECORD_BYTES = 5;
 
 export interface TimelapseRecord { x: number; y: number; c: number }
 
-export function encodeTimelapse(width: number, height: number, records: ArrayLike<TimelapseRecord> | TimelapseRecord[]): Uint8Array {
-  const count = records.length;
-  const buf = new Uint8Array(TIMELAPSE_HEADER_BYTES + count * TIMELAPSE_RECORD_BYTES);
-  const view = new DataView(buf.buffer);
+/** Writes the 16-byte header at the start of `buf` (whose records follow it). */
+export function writeTimelapseHeader(buf: Uint8Array, width: number, height: number, count: number): void {
+  const view = new DataView(buf.buffer, buf.byteOffset, TIMELAPSE_HEADER_BYTES);
   for (let i = 0; i < 4; i++) buf[i] = TIMELAPSE_MAGIC.charCodeAt(i);
   view.setUint16(4, TIMELAPSE_VERSION, true);
   view.setUint16(6, width, true);
   view.setUint16(8, height, true);
   view.setUint16(10, 0, true);
   view.setUint32(12, count, true);
+}
+
+export function encodeTimelapse(width: number, height: number, records: ArrayLike<TimelapseRecord> | TimelapseRecord[]): Uint8Array {
+  const count = records.length;
+  const buf = new Uint8Array(TIMELAPSE_HEADER_BYTES + count * TIMELAPSE_RECORD_BYTES);
+  const view = new DataView(buf.buffer);
+  writeTimelapseHeader(buf, width, height, count);
   for (let i = 0; i < count; i++) {
     const r = records[i]!;
     const o = TIMELAPSE_HEADER_BYTES + i * TIMELAPSE_RECORD_BYTES;

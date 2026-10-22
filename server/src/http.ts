@@ -1,5 +1,5 @@
-import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { existsSync, type BigIntStats } from 'node:fs';
+import { open } from 'node:fs/promises';
 import path from 'node:path';
 import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
@@ -61,6 +61,18 @@ function shortString(value: unknown, maxLength: number): string {
 function reasonText(value: unknown): string {
   if (typeof value !== 'string' || value.length > MAX_REASON_LENGTH) throw badRequest();
   return value.replace(/\p{Cc}/gu, ' ').trim();
+}
+
+/** `"size-mtime"`: changes whenever an archive is re-rendered (moderation during the break). */
+function etagOf(stats: BigIntStats): string {
+  return `"${stats.size.toString(36)}-${stats.mtimeNs.toString(36)}"`;
+}
+
+function etagMatches(header: string | undefined, etag: string): boolean {
+  return !!header && header.split(',').some((t) => {
+    const tag = t.trim().replace(/^W\//, '');
+    return tag === etag || tag === '*';
+  });
 }
 
 /* ---------------- app-wide handlers ---------------- */
@@ -137,11 +149,24 @@ function publicRoutes(app: FastifyInstance, { service }: HttpDeps): void {
 
   app.get('/api/seasons', async () => service.seasons());
 
+  // Streamed (a timelapse can weigh tens of MB) and revalidated on every use, since moderation can re-render it.
   const archived = (file: ArchiveFile, type: string) => async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
     const filePath = service.archiveFile(id, file);
     if (!filePath) throw fail(404, 'not_found');
-    return reply.header('content-type', type).header('cache-control', 'public, max-age=300').send(await readFile(filePath));
+    // One handle for the stat and the stream, so both see the same file even if a re-render replaces it meanwhile.
+    const handle = await open(filePath);
+    const stats = await handle.stat({ bigint: true }).catch(async (err: unknown) => {
+      await handle.close();
+      throw err;
+    });
+    const etag = etagOf(stats);
+    reply.header('content-type', type).header('cache-control', 'no-cache').header('etag', etag);
+    if (etagMatches(req.headers['if-none-match'], etag)) {
+      await handle.close();
+      return reply.code(304).send();
+    }
+    return reply.header('content-length', stats.size.toString()).send(handle.createReadStream());
   };
   app.get('/api/seasons/:id/image.png', archived('image.png', 'image/png'));
   app.get('/api/seasons/:id/timelapse.bin', archived('timelapse.bin', 'application/octet-stream'));

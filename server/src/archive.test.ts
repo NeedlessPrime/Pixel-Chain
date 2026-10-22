@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { PNG } from 'pngjs';
-import { DEFAULT_TIERS, EMPTY, EMPTY_COLOR, PALETTE, decodeTimelapse, effectiveCooldownMs, hexToRgb } from '@pixel/shared';
+import {
+  DEFAULT_TIERS, EMPTY, EMPTY_COLOR, PALETTE, decodeTimelapse, effectiveCooldownMs, hexToRgb, type TimelapseRecord,
+} from '@pixel/shared';
 import { buildTimelapse, renderPng } from './archive';
 import { Game, type PlaceContext } from './game';
 import { PlacementLog, scrubModerated } from './log';
@@ -22,6 +24,15 @@ function painter(game: Game) {
   };
 }
 
+/** The kept records, as objects for assertions. */
+function scrubbed(log: Uint8Array, width: number, height: number): TimelapseRecord[] {
+  const bytes = scrubModerated(log, width, height);
+  return Array.from({ length: bytes.length / PlacementLog.RECORD_BYTES }, (_, i) => {
+    const o = i * PlacementLog.RECORD_BYTES;
+    return { x: bytes[o]! | (bytes[o + 1]! << 8), y: bytes[o + 2]! | (bytes[o + 3]! << 8), c: bytes[o + 4]! };
+  });
+}
+
 /** Replays a timelapse onto an empty canvas. */
 function replay(bytes: Uint8Array): Uint8Array {
   const tl = decodeTimelapse(bytes);
@@ -36,7 +47,7 @@ describe('PlacementLog', () => {
     for (let i = 0; i < 1000; i++) log.append(i, 999 - i, i % 32);
     const reloaded = new PlacementLog(Uint8Array.from([...log.bytes(), 1, 2]));
     expect(reloaded.count).toBe(1000);
-    expect(scrubModerated(reloaded.bytes(), 1000, 1000)[999]).toEqual({ x: 999, y: 0, c: 999 % 32 });
+    expect(scrubbed(reloaded.bytes(), 1000, 1000)[999]).toEqual({ x: 999, y: 0, c: 999 % 32 });
   });
 });
 
@@ -50,7 +61,7 @@ describe('timelapse moderation scrubbing', () => {
     game.wipeRect(1, 1, 1, 1, T0);
     paint(alice, 1, 1, 6);
 
-    expect(scrubModerated(game.log.bytes(), 8, 8)).toEqual([{ x: 2, y: 2, c: 4 }, { x: 1, y: 1, c: 6 }]);
+    expect(scrubbed(game.log.bytes(), 8, 8)).toEqual([{ x: 2, y: 2, c: 4 }, { x: 1, y: 1, c: 6 }]);
     const timelapse = buildTimelapse(game.log.bytes(), 8, 8);
     expect(decodeTimelapse(timelapse).count).toBe(2);
     expect(replay(timelapse)).toEqual(game.colors);
@@ -65,9 +76,24 @@ describe('timelapse moderation scrubbing', () => {
     game.ban(bob);
     expect(game.wipeOwner(bob, T0)).toBe(1);
 
-    const records = scrubModerated(game.log.bytes(), 8, 8);
+    const records = scrubbed(game.log.bytes(), 8, 8);
     expect(records).toEqual([{ x: 0, y: 0, c: 1 }, { x: 0, y: 0, c: 2 }]);
     expect(replay(buildTimelapse(game.log.bytes(), 8, 8))).toEqual(game.colors);
+  });
+
+  it('keeps only the paint after the last of several erases, and ignores out-of-canvas records', () => {
+    const log = new PlacementLog();
+    log.append(1, 0, 3);
+    log.append(1, 0, EMPTY);
+    log.append(1, 0, 4);
+    log.append(0, 0, 9);
+    log.append(1, 0, EMPTY);
+    log.append(1, 0, 5);
+    log.append(8, 0, 1); // outside an 8×8 canvas
+    expect(scrubbed(log.bytes(), 8, 8)).toEqual([{ x: 0, y: 0, c: 9 }, { x: 1, y: 0, c: 5 }]);
+    const reserved = scrubModerated(log.bytes(), 8, 8, 16);
+    expect(reserved.length).toBe(16 + 2 * PlacementLog.RECORD_BYTES);
+    expect(decodeTimelapse(buildTimelapse(log.bytes(), 8, 8))).toMatchObject({ width: 8, height: 8, count: 2 });
   });
 });
 

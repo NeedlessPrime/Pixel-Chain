@@ -1,7 +1,10 @@
 import { mkdir, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { PNG } from 'pngjs';
-import { EMPTY, EMPTY_COLOR, PALETTE, encodeTimelapse, hexToRgb, type SeasonArchive } from '@pixel/shared';
+import {
+  EMPTY, EMPTY_COLOR, PALETTE, TIMELAPSE_HEADER_BYTES, TIMELAPSE_RECORD_BYTES, hexToRgb, writeTimelapseHeader,
+  type SeasonArchive,
+} from '@pixel/shared';
 import type { Game } from './game';
 import { scrubModerated } from './log';
 import { removeTempFiles, writeFileAtomic } from './persistence';
@@ -15,19 +18,29 @@ export type ArchiveFile = 'image.png' | 'timelapse.bin';
 /** One pixel per cell; EMPTY is drawn as the canvas background colour. */
 export function renderPng(colors: Uint8Array, width: number, height: number): Buffer {
   const png = new PNG({ width, height });
-  const rgb = PALETTE.map(hexToRgb);
+  // RGBA of every possible byte value: palette colours, anything else (EMPTY) as the background.
+  const rgba = new Uint8Array(256 * 4);
   const empty = hexToRgb(EMPTY_COLOR);
-  for (let i = 0; i < colors.length; i++) {
-    const c = colors[i]!;
-    const [r, g, b] = c === EMPTY ? empty : (rgb[c] ?? empty);
-    png.data.set([r, g, b, 255], i * 4);
+  for (let c = 0; c < 256; c++) {
+    const palette = c === EMPTY ? undefined : PALETTE[c];
+    rgba.set([...(palette ? hexToRgb(palette) : empty), 255], c * 4);
+  }
+  const out = png.data;
+  for (let i = 0, o = 0; i < colors.length; i++, o += 4) {
+    const k = colors[i]! * 4;
+    out[o] = rgba[k]!;
+    out[o + 1] = rgba[k + 1]!;
+    out[o + 2] = rgba[k + 2]!;
+    out[o + 3] = rgba[k + 3]!;
   }
   return PNG.sync.write(png);
 }
 
-/** The season timelapse with moderated content removed. */
+/** The season timelapse with moderated content removed (log records already use the timelapse layout). */
 export function buildTimelapse(log: Uint8Array, width: number, height: number): Uint8Array {
-  return encodeTimelapse(width, height, scrubModerated(log, width, height));
+  const out = scrubModerated(log, width, height, TIMELAPSE_HEADER_BYTES);
+  writeTimelapseHeader(out, width, height, (out.length - TIMELAPSE_HEADER_BYTES) / TIMELAPSE_RECORD_BYTES);
+  return out;
 }
 
 export interface ArchiveFiles {
@@ -92,6 +105,10 @@ export class ArchiveStore {
 
   has(id: string): boolean {
     return this.metas.has(id);
+  }
+
+  meta(id: string): SeasonArchive | undefined {
+    return this.metas.get(id);
   }
 
   /** Writes (or rewrites) a season archive. Writes are queued; meta.json goes last. */

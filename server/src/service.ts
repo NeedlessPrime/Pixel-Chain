@@ -89,8 +89,12 @@ export class PixelService {
     return this.d.game.leaderboard(this.d.now());
   }
 
+  /** Archives, newest first; wallets banned since an archive was rendered are left out of its top players. */
   seasons(): SeasonArchive[] {
-    return this.d.archives.list();
+    const { banned } = this.d.game;
+    return this.d.archives.list().map((a) =>
+      a.topPlayers.some((p) => banned.has(p.wallet)) ? { ...a, topPlayers: a.topPlayers.filter((p) => !banned.has(p.wallet)) } : a,
+    );
   }
 
   archiveFile(seasonId: string, file: ArchiveFile): string | null {
@@ -204,7 +208,7 @@ export class PixelService {
     this.d.game.ban(wallet);
     const erased = wipe ? this.d.game.wipeOwner(wallet, this.d.now()) : 0;
     this.d.events.emit('me', wallet);
-    if (erased) await this.afterModeration();
+    if (erased || this.inFrozenTopPlayers(wallet)) await this.afterModeration();
     return erased;
   }
 
@@ -270,6 +274,12 @@ export class PixelService {
     return r.nextPlaceAt === undefined
       ? { ok: false, code: r.code, message }
       : { ok: false, code: r.code, message, nextPlaceAt: r.nextPlaceAt };
+  }
+
+  /** Whether the Hall of Fame entry of the frozen season lists this wallet among its top players. */
+  private inFrozenTopPlayers(wallet: string): boolean {
+    const { season, archives } = this.d;
+    return !season.isLive() && !!archives.meta(season.id)?.topPlayers.some((p) => p.wallet === wallet);
   }
 
   /** A moderated final image must not stay in the Hall of Fame: re-render the archive. */
