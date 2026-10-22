@@ -107,7 +107,7 @@ export async function createApp(opts: AppOptions): Promise<PixelApp> {
   // A crash between the freeze and the archive write must not lose the season.
   if (!season.isLive() && !archives.has(season.id)) await season.archive();
 
-  const nonces = new NonceStore(now);
+  const nonces = new NonceStore(sessionSecret, now);
   const service = new PixelService({
     config, now, game, season, balances, mock, reports, archives, nonces, events, sessionSecret,
   });

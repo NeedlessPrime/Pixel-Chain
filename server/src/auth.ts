@@ -4,77 +4,99 @@ import nacl from 'tweetnacl';
 import { buildLoginMessage, isValidWallet, type NonceResponse } from '@pixel/shared';
 
 export const NONCE_TTL_MS = 5 * 60_000;
-export const MAX_NONCES_PER_WALLET = 5;
-/** Global bound so nonce requests from many IPs cannot exhaust memory. */
-const MAX_PENDING_NONCES = 50_000;
+/** Longest nonce /api/auth/verify accepts (the payload carries the domain, up to 253 characters). */
+export const MAX_NONCE_LENGTH = 1024;
 export const SESSION_TTL_MS = 24 * 3_600_000;
 
-interface PendingNonce {
-  wallet: string;
-  message: string;
-  expiresAt: number;
+interface NoncePayload {
+  /** wallet */
+  w: string;
+  /** domain written in the message */
+  d: string;
+  /** issued at, ms epoch */
+  iat: number;
+  /** random */
+  r: string;
 }
 
-/** Login nonces: single use, short-lived, a few per wallet. */
-export class NonceStore {
-  private readonly byNonce = new Map<string, PendingNonce>();
-  private readonly byWallet = new Map<string, string[]>();
+function parseNoncePayload(payload: string): NoncePayload | null {
+  try {
+    const p = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Partial<NoncePayload>;
+    const ok = typeof p.w === 'string' && typeof p.d === 'string' && Number.isSafeInteger(p.iat) && typeof p.r === 'string';
+    return ok ? (p as NoncePayload) : null;
+  } catch {
+    return null;
+  }
+}
 
-  constructor(private readonly now: () => number) {}
+/**
+ * Login nonces, stateless: `base64url(JSON{w, d, iat, r}) + "." + base64url(HMAC-SHA256)`,
+ * so the exact message can be rebuilt from the nonce alone. Nothing is kept per
+ * issued nonce, so requesting nonces (for any wallet) cannot evict anyone's.
+ * Nonces that served a login are remembered until they expire, against replays.
+ */
+export class NonceStore {
+  private readonly key: Buffer;
+  /** nonce -> expiresAt, roughly in expiry order */
+  private readonly used = new Map<string, number>();
+
+  constructor(sessionSecret: string, private readonly now: () => number) {
+    // A key of its own, so a nonce can never pass for a session token or the reverse.
+    this.key = createHmac('sha256', sessionSecret).update('pixel:login-nonce:v1').digest();
+  }
 
   issue(wallet: string, domain: string): NonceResponse {
+    const iat = this.now();
+    const data: NoncePayload = { w: wallet, d: domain, iat, r: randomBytes(16).toString('base64url') };
+    const payload = Buffer.from(JSON.stringify(data)).toString('base64url');
+    const nonce = `${payload}.${this.mac(payload)}`;
+    return { nonce, message: loginMessage(data, nonce), expiresAt: iat + NONCE_TTL_MS };
+  }
+
+  /** The message issued with this nonce; null if forged, expired, already used or issued to another wallet. */
+  open(wallet: string, nonce: string): { message: string; expiresAt: number } | null {
+    const [payload, mac, extra] = nonce.split('.');
+    if (!payload || !mac || extra !== undefined) return null;
+    const expected = Buffer.from(this.mac(payload));
+    const given = Buffer.from(mac);
+    if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
+    const data = parseNoncePayload(payload);
+    if (!data || data.w !== wallet) return null;
+    const expiresAt = data.iat + NONCE_TTL_MS;
+    if (expiresAt <= this.now() || this.used.has(nonce)) return null;
+    return { message: loginMessage(data, nonce), expiresAt };
+  }
+
+  /** Remembers a nonce that served a login until it expires. */
+  burn(nonce: string, expiresAt: number): void {
     const now = this.now();
-    this.dropExpired(wallet, now);
-    // Evict the oldest rather than refuse, so spamming nonces for someone else's wallet cannot lock them out.
-    while (this.pendingFor(wallet).length >= MAX_NONCES_PER_WALLET) this.forget(this.pendingFor(wallet)[0]!);
-    if (this.byNonce.size >= MAX_PENDING_NONCES) this.forget(this.byNonce.keys().next().value!);
-
-    const nonce = randomBytes(16).toString('hex');
-    const message = buildLoginMessage({ domain, wallet, nonce, issuedAt: new Date(now).toISOString() });
-    const expiresAt = now + NONCE_TTL_MS;
-    this.byNonce.set(nonce, { wallet, message, expiresAt });
-    this.byWallet.set(wallet, [...this.pendingFor(wallet), nonce]);
-    return { nonce, message, expiresAt };
+    for (const [old, until] of this.used) {
+      if (until > now) break;
+      this.used.delete(old);
+    }
+    this.used.set(nonce, expiresAt);
   }
 
-  /** Returns the message issued with this nonce and burns it; null if unknown, expired or issued to another wallet. */
-  consume(wallet: string, nonce: string): string | null {
-    const entry = this.byNonce.get(nonce);
-    if (!entry || entry.wallet !== wallet) return null;
-    this.forget(nonce);
-    return entry.expiresAt > this.now() ? entry.message : null;
-  }
-
-  /** Drops every expired nonce (called periodically). */
+  /** Forgets every expired used nonce (called periodically). */
   sweep(): void {
     const now = this.now();
-    for (const [nonce, entry] of this.byNonce) {
-      if (entry.expiresAt <= now) this.forget(nonce);
+    for (const [nonce, until] of this.used) {
+      if (until <= now) this.used.delete(nonce);
     }
   }
 
+  /** Used nonces still remembered. */
   get size(): number {
-    return this.byNonce.size;
+    return this.used.size;
   }
 
-  private pendingFor(wallet: string): string[] {
-    return this.byWallet.get(wallet) ?? [];
+  private mac(payload: string): string {
+    return createHmac('sha256', this.key).update(payload).digest('base64url');
   }
+}
 
-  private dropExpired(wallet: string, now: number): void {
-    for (const nonce of this.pendingFor(wallet)) {
-      if (this.byNonce.get(nonce)!.expiresAt <= now) this.forget(nonce);
-    }
-  }
-
-  private forget(nonce: string): void {
-    const entry = this.byNonce.get(nonce);
-    if (!entry) return;
-    this.byNonce.delete(nonce);
-    const rest = (this.byWallet.get(entry.wallet) ?? []).filter((n) => n !== nonce);
-    if (rest.length) this.byWallet.set(entry.wallet, rest);
-    else this.byWallet.delete(entry.wallet);
-  }
+function loginMessage(data: NoncePayload, nonce: string): string {
+  return buildLoginMessage({ domain: data.d, wallet: data.w, nonce, issuedAt: new Date(data.iat).toISOString() });
 }
 
 /** Checks a base58 ed25519 signature of `message` (UTF-8) by the wallet's public key. */
@@ -111,8 +133,9 @@ export function verifySessionToken(token: unknown, secret: string, now: number):
   if (typeof token !== 'string' || token.length > 512) return null;
   const [payload, mac, extra] = token.split('.');
   if (!payload || !mac || extra !== undefined) return null;
-  const expected = hmac(secret, payload);
-  const given = Buffer.from(mac, 'base64url');
+  // Compared as text: decoding would also accept other spellings of the same MAC (base64 padding bits).
+  const expected = Buffer.from(hmac(secret, payload).toString('base64url'));
+  const given = Buffer.from(mac);
   if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
   try {
     const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { w?: unknown; exp?: unknown };

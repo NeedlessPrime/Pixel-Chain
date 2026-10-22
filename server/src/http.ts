@@ -6,7 +6,7 @@ import fastifyStatic from '@fastify/static';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { MAX_CANVAS_SIZE, MAX_REPORT_SIZE, isValidWallet, normalizeFaction } from '@pixel/shared';
 import type { ArchiveFile } from './archive';
-import { adminTokenMatches, bearerToken } from './auth';
+import { MAX_NONCE_LENGTH, adminTokenMatches, bearerToken } from './auth';
 import { MAX_MOCK_BALANCE } from './balances';
 import type { ServerConfig } from './config';
 import { HTTP_MESSAGES, factionLockedMessage } from './messages';
@@ -188,7 +188,7 @@ function authRoutes(app: FastifyInstance, { service, config }: HttpDeps): void {
 
   app.post('/api/auth/verify', options, async (req) => {
     const body = objectBody(req);
-    const result = await service.login(walletParam(body.wallet), shortString(body.nonce, 64), shortString(body.signature, 128));
+    const result = await service.login(walletParam(body.wallet), shortString(body.nonce, MAX_NONCE_LENGTH), shortString(body.signature, 128));
     if (!result.ok) throw fail(401, result.code);
     return result.res;
   });

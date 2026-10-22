@@ -32,13 +32,22 @@ describe('auth routes', () => {
 
     const forged = await post('/api/auth/verify', { wallet: alice.wallet, nonce, signature: newWallet().sign(message) });
     expect([forged.statusCode, forged.json().error]).toEqual([401, 'bad_signature']);
-    // The forged attempt burned the nonce.
+
+    const ok = await post('/api/auth/verify', { wallet: alice.wallet, nonce, signature: alice.sign(message) });
+    expect(ok.json()).toMatchObject({ expiresAt: app.clock.now() + 86_400_000, me: { wallet: alice.wallet, balance: 0, tier: null } });
     const replay = await post('/api/auth/verify', { wallet: alice.wallet, nonce, signature: alice.sign(message) });
     expect([replay.statusCode, replay.json().error]).toEqual([401, 'invalid_nonce']);
+  });
 
-    const fresh = (await post('/api/auth/nonce', { wallet: alice.wallet })).json<NonceResponse>();
-    const ok = await post('/api/auth/verify', { wallet: alice.wallet, nonce: fresh.nonce, signature: alice.sign(fresh.message) });
-    expect(ok.json()).toMatchObject({ expiresAt: app.clock.now() + 86_400_000, me: { wallet: alice.wallet, balance: 0, tier: null } });
+  it('keeps a pending login valid while someone else requests nonces for the same wallet', async () => {
+    app = await startTestApp();
+    const victim = newWallet();
+    const mine = (await post('/api/auth/nonce', { wallet: victim.wallet })).json<NonceResponse>();
+    for (let i = 0; i < 9; i++) {
+      await app.http.inject({ method: 'POST', url: '/api/auth/nonce', payload: { wallet: victim.wallet }, remoteAddress: `10.6.6.${i}` });
+    }
+    const res = await post('/api/auth/verify', { wallet: victim.wallet, nonce: mine.nonce, signature: victim.sign(mine.message) });
+    expect(res.statusCode).toBe(200);
   });
 
   it('validates inputs and answers JSON errors', async () => {

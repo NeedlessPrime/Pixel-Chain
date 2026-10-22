@@ -108,9 +108,10 @@ export class PixelService {
   }
 
   async login(wallet: string, nonce: string, signature: string): Promise<LoginResult> {
-    const message = this.d.nonces.consume(wallet, nonce);
-    if (!message) return { ok: false, code: 'invalid_nonce' };
-    if (!verifyLoginSignature(message, wallet, signature)) return { ok: false, code: 'bad_signature' };
+    const issued = this.d.nonces.open(wallet, nonce);
+    if (!issued) return { ok: false, code: 'invalid_nonce' };
+    if (!verifyLoginSignature(issued.message, wallet, signature)) return { ok: false, code: 'bad_signature' };
+    this.d.nonces.burn(nonce, issued.expiresAt);
     const { token, expiresAt } = createSessionToken(wallet, this.d.sessionSecret, this.d.now());
     return { ok: true, res: { token, expiresAt, me: await this.me(wallet) } };
   }
