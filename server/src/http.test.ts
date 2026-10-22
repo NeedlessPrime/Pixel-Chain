@@ -116,6 +116,7 @@ describe('player routes', () => {
   it('changes faction at most once per hour', async () => {
     app = await startTestApp();
     const p = await signIn();
+    await post('/api/dev/balance', { balance: 10_000 }, p.auth);
     expect((await post('/api/me/faction', { faction: '  Les   Bleus ' }, p.auth)).json().faction).toBe('Les Bleus');
     const locked = await post('/api/me/faction', { faction: null }, p.auth);
     expect(locked.statusCode).toBe(429);
@@ -125,12 +126,54 @@ describe('player routes', () => {
     expect((await post('/api/me/faction', { faction: null }, p.auth)).json()).toMatchObject({ faction: null });
   });
 
+  it('keeps reports and factions for holders', async () => {
+    app = await startTestApp();
+    const p = await signIn();
+    const holderOnly = { error: 'not_holder', message: 'Réservé aux holders : garde au moins 10 000 $PIXEL' };
+    for (const res of [
+      await post('/api/report', { x: 0, y: 0, w: 1, h: 1, reason: 'spam' }, p.auth),
+      await post('/api/me/faction', { faction: 'Bleus' }, p.auth),
+      await post('/api/me/faction', { faction: null }, p.auth),
+    ]) {
+      expect([res.statusCode, res.json()]).toEqual([403, holderOnly]);
+    }
+    expect((await app.http.inject({ url: '/api/admin/reports', headers: ADMIN })).json()).toEqual([]);
+    await post('/api/dev/balance', { balance: 9_999 }, p.auth);
+    expect((await post('/api/report', { x: 0, y: 0, w: 1, h: 1, reason: 'spam' }, p.auth)).statusCode).toBe(403);
+    await post('/api/dev/balance', { balance: 10_000 }, p.auth);
+    expect((await post('/api/report', { x: 0, y: 0, w: 1, h: 1, reason: 'spam' }, p.auth)).json()).toEqual({ ok: true });
+  });
+
+  it('answers 503 when the balance of an unknown wallet cannot be read', async () => {
+    app = await startTestApp({ env: { TOKEN_MINT: MINT }, balanceProvider: { fetchBalance: () => Promise.reject(new Error('down')) } });
+    const p = await signIn();
+    const res = await post('/api/me/faction', { faction: 'Bleus' }, p.auth);
+    expect([res.statusCode, res.json().error]).toEqual([503, 'rpc_unavailable']);
+  });
+
+  it('caps open reports at 2000 overall', async () => {
+    app = await startTestApp();
+    const area = { x: 0, y: 0, w: 1, h: 1, reason: 'spam' };
+    for (let i = 0; i < 200; i++) {
+      const wallet = `wallet-${i}`;
+      app.service.setMockBalance(wallet, 10_000);
+      for (let k = 0; k < 10; k++) expect(await app.service.report(wallet, area)).toEqual({ ok: true });
+    }
+    const p = await signIn();
+    await post('/api/dev/balance', { balance: 10_000 }, p.auth);
+    const full = await post('/api/report', area, p.auth);
+    expect([full.statusCode, full.json()]).toEqual([429, { error: 'too_many_reports', message: 'Trop de signalements en attente, réessaie plus tard' }]);
+    expect((await post('/api/admin/reports/1/resolve', {}, ADMIN)).statusCode).toBe(200);
+    expect((await post('/api/report', area, p.auth)).json()).toEqual({ ok: true });
+  });
+
   it('accepts reports within limits', async () => {
     app = await startTestApp();
     const p = await signIn();
+    await post('/api/dev/balance', { balance: 10_000 }, p.auth);
     const area = { x: 60, y: 40, w: 10, h: 10, reason: 'insulte' };
     for (let i = 0; i < 10; i++) expect((await post('/api/report', area, p.auth)).json()).toEqual({ ok: true });
-    expect((await post('/api/report', area, p.auth)).json().error).toBe('too_many_reports');
+    expect((await post('/api/report', area, p.auth)).json()).toEqual({ error: 'too_many_reports', message: 'Tu as déjà 10 signalements en attente' });
     expect((await post('/api/report', { ...area, w: 65 }, p.auth)).statusCode).toBe(400);
     expect((await post('/api/report', { ...area, x: 64 }, p.auth)).statusCode).toBe(400);
     const reports = (await app.http.inject({ url: '/api/admin/reports', headers: ADMIN })).json();

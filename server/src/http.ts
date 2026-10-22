@@ -9,8 +9,8 @@ import type { ArchiveFile } from './archive';
 import { MAX_NONCE_LENGTH, adminTokenMatches, bearerToken } from './auth';
 import { MAX_MOCK_BALANCE } from './balances';
 import type { ServerConfig } from './config';
-import { HTTP_MESSAGES, factionLockedMessage } from './messages';
-import type { PixelService } from './service';
+import { HTTP_MESSAGES } from './messages';
+import type { PixelService, Refusal, RefusalCode } from './service';
 
 /** A JSON error response: `{ error: code, message }` (message in French, shown to players). */
 export class HttpError extends Error {
@@ -22,6 +22,9 @@ export class HttpError extends Error {
 type Code = keyof typeof HTTP_MESSAGES;
 const fail = (status: number, code: Code, message: string = HTTP_MESSAGES[code]) => new HttpError(status, code, message);
 const badRequest = (message?: string) => fail(400, 'bad_request', message);
+
+const REFUSAL_STATUS: Record<RefusalCode, number> = { not_holder: 403, rpc_unavailable: 503, too_many_reports: 429, faction_locked: 429 };
+const refused = (r: Refusal) => new HttpError(REFUSAL_STATUS[r.code], r.code, r.message);
 
 const REQUESTS_PER_MINUTE = 120;
 const AUTH_REQUESTS_PER_MINUTE = 10;
@@ -102,7 +105,6 @@ export function installErrorHandlers(app: FastifyInstance): void {
 export interface HttpDeps {
   service: PixelService;
   config: ServerConfig;
-  now: () => number;
 }
 
 /** Every /api route, behind the per-IP rate limits. Call inside an encapsulated plugin. */
@@ -194,7 +196,7 @@ function authRoutes(app: FastifyInstance, { service, config }: HttpDeps): void {
   });
 }
 
-function playerRoutes(app: FastifyInstance, { service, now }: HttpDeps): void {
+function playerRoutes(app: FastifyInstance, { service }: HttpDeps): void {
   const walletOf = (req: FastifyRequest): string => {
     const session = service.session(bearerToken(req.headers.authorization));
     if (!session) throw fail(401, 'unauthenticated');
@@ -211,8 +213,8 @@ function playerRoutes(app: FastifyInstance, { service, now }: HttpDeps): void {
     const raw = objectBody(req).faction;
     const faction = raw === null ? null : normalizeFaction(raw);
     if (raw !== null && !faction) throw fail(400, 'bad_faction');
-    const result = service.setFaction(wallet, faction);
-    if (!result.ok) throw new HttpError(429, 'faction_locked', factionLockedMessage(result.lockedUntil, now()));
+    const result = await service.setFaction(wallet, faction);
+    if (!result.ok) throw refused(result);
     return service.me(wallet);
   });
 
@@ -229,7 +231,8 @@ function playerRoutes(app: FastifyInstance, { service, now }: HttpDeps): void {
       h: Math.min(int(body.h, 1, MAX_REPORT_SIZE), height - y),
       reason: reasonText(body.reason),
     };
-    if (!service.report(wallet, area)) throw fail(429, 'too_many_reports');
+    const result = await service.report(wallet, area);
+    if (!result.ok) throw refused(result);
     return { ok: true };
   });
 

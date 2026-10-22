@@ -11,7 +11,7 @@ import type { BalanceCache, MockBalances } from './balances';
 import type { ServerConfig } from './config';
 import type { ServerEvents } from './events';
 import type { Game, PlaceRejection } from './game';
-import { placeErrorMessage } from './messages';
+import { HTTP_MESSAGES, REPORTS_FULL_MESSAGE, factionLockedMessage, holderOnlyMessage, placeErrorMessage } from './messages';
 import type { NewReport, ReportStore } from './reports';
 import type { SeasonManager } from './season';
 
@@ -20,6 +20,15 @@ export type PlaceResult =
   | { ok: false; code: PlaceErrorCode; message: string; nextPlaceAt?: number };
 
 export type LoginResult = { ok: true; res: VerifyResponse } | { ok: false; code: 'invalid_nonce' | 'bad_signature' };
+
+export type RefusalCode = 'not_holder' | 'rpc_unavailable' | 'too_many_reports' | 'faction_locked';
+/** A player action the rules refuse, with a French message. */
+export interface Refusal {
+  ok: false;
+  code: RefusalCode;
+  message: string;
+}
+export type ActionResult = { ok: true } | Refusal;
 
 export interface ServiceDeps {
   config: ServerConfig;
@@ -132,7 +141,7 @@ export class PixelService {
    * Only a wallet the cache does not know yet (server restart, long absence) gets one read.
    */
   async meForSocket(wallet: string): Promise<MeInfo> {
-    return this.d.balances.peek(wallet) ? this.meCached(wallet) : this.me(wallet);
+    return this.buildMe(wallet, (await this.knownBalance(wallet)) ?? 0);
   }
 
   /** MeInfo with the balance refreshed per the cache rules; the last known value if the RPC is down. */
@@ -173,16 +182,26 @@ export class PixelService {
     return this.rejection({ ok: false, code });
   }
 
-  setFaction(wallet: string, faction: string | null): { ok: true } | { ok: false; lockedUntil: number } {
-    const result = this.d.game.setFaction(wallet, faction, this.d.now());
-    if (result.ok) this.d.events.emit('me', wallet);
-    return result;
+  async setFaction(wallet: string, faction: string | null): Promise<ActionResult> {
+    const refused = await this.holderOnly(wallet);
+    if (refused) return refused;
+    const now = this.d.now();
+    const result = this.d.game.setFaction(wallet, faction, now);
+    if (!result.ok) return { ok: false, code: 'faction_locked', message: factionLockedMessage(result.lockedUntil, now) };
+    this.d.events.emit('me', wallet);
+    return { ok: true };
   }
 
-  report(wallet: string, area: NewReport): Report | null {
-    const report = this.d.reports.add(wallet, area, this.d.now());
-    if (report) this.d.game.dirty = true;
-    return report;
+  async report(wallet: string, area: NewReport): Promise<ActionResult> {
+    const refused = await this.holderOnly(wallet);
+    if (refused) return refused;
+    const added = this.d.reports.add(wallet, area, this.d.now());
+    if (!added.ok) {
+      const message = added.limit === 'wallet' ? HTTP_MESSAGES.too_many_reports : REPORTS_FULL_MESSAGE;
+      return { ok: false, code: 'too_many_reports', message };
+    }
+    this.d.game.dirty = true;
+    return { ok: true };
   }
 
   /** Mock mode only: returns false when balances are real. */
@@ -252,6 +271,29 @@ export class PixelService {
 
   /* ---------------- internals ---------------- */
 
+  /** Last known balance, read only for a wallet the cache does not know yet; null if it cannot be read. */
+  private async knownBalance(wallet: string): Promise<number | null> {
+    const cached = this.d.balances.peek(wallet);
+    if (cached) return cached.balance;
+    try {
+      return await this.d.balances.get(wallet);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Reports and factions cost nothing: keep them for wallets that could also paint, or throwaway wallets spam them. */
+  private async holderOnly(wallet: string): Promise<Refusal | null> {
+    const balance = await this.knownBalance(wallet);
+    if (balance === null) return { ok: false, code: 'rpc_unavailable', message: HTTP_MESSAGES.rpc_unavailable };
+    if (tierForBalance(balance, this.d.config.tiers)) return null;
+    return { ok: false, code: 'not_holder', message: holderOnlyMessage(this.minBalance(), this.d.config.token.symbol) };
+  }
+
+  private minBalance(): number {
+    return Math.min(...this.d.config.tiers.map((t) => t.minBalance));
+  }
+
   private cooldownMs(tier: Tier): number {
     return effectiveCooldownMs(tier, this.d.season.chaosActive(), this.d.config.chaosFactor);
   }
@@ -276,9 +318,8 @@ export class PixelService {
   }
 
   private rejection(r: PlaceRejection): PlaceResult {
-    const minBalance = Math.min(...this.d.config.tiers.map((t) => t.minBalance));
     const message = placeErrorMessage(r.code, {
-      now: this.d.now(), nextPlaceAt: r.nextPlaceAt, minBalance, symbol: this.d.config.token.symbol,
+      now: this.d.now(), nextPlaceAt: r.nextPlaceAt, minBalance: this.minBalance(), symbol: this.d.config.token.symbol,
     });
     return r.nextPlaceAt === undefined
       ? { ok: false, code: r.code, message }

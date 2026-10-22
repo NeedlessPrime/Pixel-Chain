@@ -1,6 +1,8 @@
 import type { Report } from '@pixel/shared';
 
 export const MAX_OPEN_REPORTS_PER_WALLET = 10;
+/** Open reports overall: past this, new ones wait until moderators catch up. */
+export const MAX_OPEN_REPORTS = 2000;
 /** Resolved reports kept for the admin history; older ones are dropped. */
 const MAX_RESOLVED_KEPT = 500;
 
@@ -11,17 +13,26 @@ export interface ReportsSnapshot {
 
 export type NewReport = Pick<Report, 'x' | 'y' | 'w' | 'h' | 'reason'>;
 
+export type AddReportResult = { ok: true; report: Report } | { ok: false; limit: 'wallet' | 'global' };
+
 export class ReportStore {
   private reports: Report[] = [];
   private nextId = 1;
 
-  /** Adds an open report, or returns null when the wallet already has too many open. */
-  add(wallet: string, area: NewReport, now: number): Report | null {
-    const open = this.reports.filter((r) => r.wallet === wallet && r.status === 'open').length;
-    if (open >= MAX_OPEN_REPORTS_PER_WALLET) return null;
+  /** Adds an open report, unless the wallet or everyone together already has too many open. */
+  add(wallet: string, area: NewReport, now: number): AddReportResult {
+    let open = 0;
+    let mine = 0;
+    for (const r of this.reports) {
+      if (r.status !== 'open') continue;
+      open++;
+      if (r.wallet === wallet) mine++;
+    }
+    if (mine >= MAX_OPEN_REPORTS_PER_WALLET) return { ok: false, limit: 'wallet' };
+    if (open >= MAX_OPEN_REPORTS) return { ok: false, limit: 'global' };
     const report: Report = { id: String(this.nextId++), ...area, wallet, createdAt: now, status: 'open' };
     this.reports.push(report);
-    return report;
+    return { ok: true, report };
   }
 
   /** Open reports first, newest first within each group. */

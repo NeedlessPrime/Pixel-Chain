@@ -44,12 +44,22 @@ export const HTTP_MESSAGES = {
   not_found: 'Introuvable',
   bad_faction: 'Nom de faction invalide (2 à 16 lettres, chiffres, espaces, $ _ . -)',
   too_many_reports: `Tu as déjà ${MAX_OPEN_REPORTS_PER_WALLET} signalements en attente`,
+  not_holder: 'Réservé aux holders',
+  rpc_unavailable: 'Impossible de lire ton solde, réessaie dans un instant',
   rate_limited: 'Trop de requêtes, réessaie dans un instant',
   season_live: 'La saison est encore en cours',
   season_frozen: 'La saison est déjà terminée',
   bad_size: `Taille invalide : la toile peut seulement grandir (${MAX_CANVAS_SIZE} max)`,
   internal: 'Erreur interne',
 } as const;
+
+/** `too_many_reports` when every wallet together has too many open. */
+export const REPORTS_FULL_MESSAGE = 'Trop de signalements en attente, réessaie plus tard';
+
+/** Reports and factions are for holders. */
+export function holderOnlyMessage(minBalance: number, symbol: string): string {
+  return `Réservé aux holders : garde au moins ${formatAmount(minBalance)} ${symbol}`;
+}
 
 export function factionLockedMessage(lockedUntil: number, now: number): string {
   return `Tu pourras changer de faction dans ${Math.max(1, Math.ceil((lockedUntil - now) / 60_000))} min`;

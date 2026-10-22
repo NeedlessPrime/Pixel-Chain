@@ -116,7 +116,7 @@ export async function createApp(opts: AppOptions): Promise<PixelApp> {
   installErrorHandlers(http);
   await http.register(websocket, { options: { maxPayload: MAX_FRAME_BYTES } });
   await http.register(async (api) => {
-    await registerApi(api, { service, config, now });
+    await registerApi(api, { service, config });
     registerWs(api, hub);
   });
   const servesWeb = await registerStatic(http, config.webDist);

@@ -16,8 +16,8 @@ describe('persistence', () => {
     const first = await startTestApp({ dir, clock });
     first.service.setMockBalance(player, 1_000_000);
     expect(await first.service.place(player, 3, 4, 7)).toMatchObject({ ok: true });
-    first.service.setFaction(player, 'Bleus');
-    first.service.report(player, { x: 3, y: 4, w: 2, h: 2, reason: 'spam' });
+    expect(await first.service.setFaction(player, 'Bleus')).toEqual({ ok: true });
+    expect(await first.service.report(player, { x: 3, y: 4, w: 2, h: 2, reason: 'spam' })).toEqual({ ok: true });
     first.game.ban(newWallet().wallet);
     const before = {
       colors: first.game.colors.slice(),
