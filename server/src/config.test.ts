@@ -45,7 +45,7 @@ describe('loadConfig', () => {
   });
 
   it('parses TRUST_PROXY as off, a hop count or a proxy list, never "trust everyone"', () => {
-    for (const off of [undefined, '', '0', 'false', 'FALSE']) expect(loadConfig({ TRUST_PROXY: off }).trustProxy).toBe(false);
+    for (const off of [undefined, '', '0', '00', 'false', 'FALSE']) expect(loadConfig({ TRUST_PROXY: off }).trustProxy).toBe(false);
     expect(loadConfig({ TRUST_PROXY: '1' }).trustProxy).toBe(1);
     expect(loadConfig({ TRUST_PROXY: '2' }).trustProxy).toBe(2);
     expect(loadConfig({ TRUST_PROXY: ' 10.0.0.2 , 172.16.0.0/12,::1,loopback' }).trustProxy).toBe('10.0.0.2,172.16.0.0/12,::1,loopback');

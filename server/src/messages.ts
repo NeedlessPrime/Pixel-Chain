@@ -28,7 +28,7 @@ export function placeErrorMessage(code: PlaceErrorCode, ctx: PlaceMessageContext
     case 'not_holder': return `Achète au moins ${formatAmount(ctx.minBalance)} ${ctx.symbol} pour jouer`;
     case 'cooldown': return `Attends encore ${Math.max(1, Math.ceil(((ctx.nextPlaceAt ?? ctx.now) - ctx.now) / 1000))} s`;
     case 'rate_limited': return 'Doucement ! Trop de messages';
-    case 'rpc_unavailable': return 'Impossible de lire ton solde, réessaie dans un instant';
+    case 'rpc_unavailable': return HTTP_MESSAGES.rpc_unavailable;
     case 'internal': return 'Erreur interne, réessaie';
   }
 }

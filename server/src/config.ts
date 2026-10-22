@@ -134,8 +134,8 @@ function isIpOrCidr(value: string): boolean {
 /** Never `true`: trusting every hop would let any client pick its own IP with X-Forwarded-For. */
 function parseTrustProxy(env: Env): false | number | string {
   const raw = str(env, 'TRUST_PROXY');
-  if (raw === undefined || raw === '0' || raw.toLowerCase() === 'false') return false;
-  if (/^\d+$/.test(raw)) return Number(raw);
+  if (raw === undefined || raw.toLowerCase() === 'false') return false;
+  if (/^\d+$/.test(raw)) return Number(raw) || false;
   const entries = raw.split(',').map((s) => s.trim());
   if (!entries.every((e) => PROXY_PRESETS.includes(e) || isIpOrCidr(e))) {
     throw new ConfigError(
