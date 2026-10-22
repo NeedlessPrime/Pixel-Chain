@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0E0E14" />
+    <meta name="description" content="$PIXEL : une toile de pixels partagée pour les holders. Une saison par semaine, puis direction le Hall of Fame." />
+    <title>$PIXEL — la toile des holders</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Press+Start+2P&display=swap" />
+  </head>
+  <body class="page-game">
+    <canvas id="board" class="board" aria-label="Toile partagée : flèches pour choisir une case, Entrée pour poser"></canvas>
+    <div id="hud-top" class="hud-top">
+      <header id="topbar" class="topbar"></header>
+      <div id="banners" class="banners"></div>
+    </div>
+    <div id="panel-backdrop" class="panel-backdrop"></div>
+    <aside id="panel" class="panel" aria-label="Tableau de bord"></aside>
+    <footer id="bottombar" class="bottombar"></footer>
+    <noscript><p class="noscript">$PIXEL a besoin de JavaScript pour afficher la toile.</p></noscript>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
