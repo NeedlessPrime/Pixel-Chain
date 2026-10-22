@@ -186,12 +186,17 @@ function reportsSection(): Node[] {
 }
 
 function reportCard(r: Report): HTMLElement {
-  const inspect = h('div', { class: 'inspect small muted' }, 'Clique un pixel de l’aperçu pour voir son auteur.');
+  // A report from an earlier season points at a canvas that no longer exists:
+  // previewing, inspecting or wiping it would hit this season's pixels.
+  const current = r.seasonId === config?.season.id;
+  const inspect = h('div', { class: 'inspect small muted', hidden: !current }, 'Clique un pixel de l’aperçu pour voir son auteur.');
   const owners = h('div', { class: 'small', hidden: true, style: { display: 'grid', gap: '6px' } });
   return h(
     'article',
     { class: `report card ${r.status === 'resolved' ? 'is-resolved' : ''}` },
-    reportPreview(r, (x, y) => void inspectCell(x, y, inspect)),
+    current
+      ? reportPreview(r, (x, y) => void inspectCell(x, y, inspect))
+      : h('div', { class: 'preview muted small' }, 'Saison précédente : cette zone n’existe plus sur la toile actuelle.'),
     h(
       'div',
       { class: 'report-body' },
@@ -208,16 +213,18 @@ function reportCard(r: Report): HTMLElement {
       h(
         'div',
         { class: 'actions' },
-        h('button', {
-          class: 'btn btn-danger btn-sm',
-          type: 'button',
-          onclick: () => {
-            if (confirm(`Effacer la zone (${r.x}, ${r.y}) ${r.w}×${r.h} ?`)) {
-              void run(erased('Zone effacée'), () => adminPost('/api/admin/wipe', { x: r.x, y: r.y, w: r.w, h: r.h }));
-            }
-          },
-        }, 'Effacer la zone'),
-        h('button', { class: 'btn btn-sm', type: 'button', onclick: () => void listOwners(r, owners) }, 'Qui a dessiné ici ?'),
+        current
+          ? h('button', {
+              class: 'btn btn-danger btn-sm',
+              type: 'button',
+              onclick: () => {
+                if (confirm(`Effacer la zone (${r.x}, ${r.y}) ${r.w}×${r.h} ?`)) {
+                  void run(erased('Zone effacée'), () => adminPost('/api/admin/wipe', { x: r.x, y: r.y, w: r.w, h: r.h }));
+                }
+              },
+            }, 'Effacer la zone')
+          : null,
+        current ? h('button', { class: 'btn btn-sm', type: 'button', onclick: () => void listOwners(r, owners) }, 'Qui a dessiné ici ?') : null,
         r.status === 'open'
           ? h('button', {
               class: 'btn btn-sm',

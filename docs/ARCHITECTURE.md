@@ -55,7 +55,7 @@ Read from the environment, then from `.env` at the repo root if it exists
 | `ADMIN_TOKEN` | unset → admin API disabled | sent as `x-admin-token`; at least 16 characters and not `change-me` (startup fails otherwise) |
 | `TOKEN_SYMBOL` | `$PIXEL` | |
 | `TOKEN_MINT` | unset | required when `MODE=live` |
-| `BUY_URL` | `https://pump.fun/coin/<mint>` if mint set | |
+| `BUY_URL` | `https://pump.fun/coin/<mint>` if mint set | must be `https://` |
 | `SOLANA_RPC_URL` | `https://api.mainnet-beta.solana.com` | use a paid RPC (Helius…) in prod |
 | `RPC_MAX_RPS` | `20` | global cap on balance RPC calls per second (token bucket, bursts up to twice this; not applied to mock balances) |
 | `BALANCE_TTL_MS` | `30000` | balance cache per wallet |
@@ -143,7 +143,7 @@ The clock must be injectable (`now()` function) so tests can fast-forward.
 | `GET /api/seasons/:id/image.png` | – | final image (1 px per cell; the client scales it with `image-rendering: pixelated`) |
 | `GET /api/seasons/:id/timelapse.bin` | – | `shared/src/timelapse.ts` format |
 | `POST /api/dev/balance` | Bearer, **mock mode only** (404 otherwise) | `{ balance: number }` → `MeInfo` |
-| `GET /api/admin/reports` | admin | `Report[]` (open first) |
+| `GET /api/admin/reports` | admin | `Report[]` (open first). Each carries the `seasonId` it was made in; the admin page only offers preview, owners lookup and wipe for reports of the current season |
 | `GET /api/admin/owners?x=&y=&w=&h=` | admin | `AreaOwners`: `{ owners: { wallet, faction, pixels }[] }` for the area (`w`, `h` each 1–`MAX_REPORT_SIZE`, clipped), most pixels first, empty and logo cells excluded |
 | `POST /api/admin/reports/:id/resolve` | admin | `{ ok: true }` |
 | `POST /api/admin/wipe` | admin | `{ x, y, w, h }` → `{ ok: true, erased }`; cells become `EMPTY`, owner 0; broadcast as `px`. During the frozen break the archive is re-rendered too |

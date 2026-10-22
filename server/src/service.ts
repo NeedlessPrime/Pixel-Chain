@@ -195,7 +195,7 @@ export class PixelService {
   async report(wallet: string, area: NewReport): Promise<ActionResult> {
     const refused = await this.holderOnly(wallet);
     if (refused) return refused;
-    const added = this.d.reports.add(wallet, area, this.d.now());
+    const added = this.d.reports.add(wallet, area, this.d.season.info().id, this.d.now());
     if (!added.ok) {
       const message = added.limit === 'wallet' ? HTTP_MESSAGES.too_many_reports : REPORTS_FULL_MESSAGE;
       return { ok: false, code: 'too_many_reports', message };

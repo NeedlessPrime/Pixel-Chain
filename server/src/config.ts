@@ -169,6 +169,20 @@ function parseMint(env: Env, mode: Mode): string | null {
   return mint;
 }
 
+/** The buy button is a link players click: only https pages, never javascript: or other schemes. */
+function parseBuyUrl(env: Env, mint: string | null): string | null {
+  const raw = str(env, 'BUY_URL');
+  if (!raw) return mint ? `https://pump.fun/coin/${mint}` : null;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new ConfigError('BUY_URL is not a valid URL');
+  }
+  if (url.protocol !== 'https:') throw new ConfigError('BUY_URL must be an https:// URL');
+  return raw;
+}
+
 /** Reads and validates the environment. Throws ConfigError with a readable message. */
 export function loadConfig(env: Env = process.env): ServerConfig {
   // A mint means real balances, unless MODE=mock is asked for explicitly.
@@ -190,7 +204,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     token: {
       symbol: str(env, 'TOKEN_SYMBOL') ?? '$PIXEL',
       mint,
-      buyUrl: str(env, 'BUY_URL') ?? (mint ? `https://pump.fun/coin/${mint}` : null),
+      buyUrl: parseBuyUrl(env, mint),
     },
     rpcUrl: str(env, 'SOLANA_RPC_URL') ?? 'https://api.mainnet-beta.solana.com',
     rpcMaxRps: num(env, 'RPC_MAX_RPS', 20, { min: 1, max: 10_000 }),

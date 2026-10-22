@@ -135,6 +135,8 @@ export interface Report {
   reason: string;
   /** reporter wallet */
   wallet: string;
+  /** Season the report was made in: the area only means something on that season's canvas ('' if unknown). */
+  seasonId: string;
   createdAt: number;
   status: 'open' | 'resolved';
 }

@@ -21,6 +21,12 @@ toile est figée, signée du logo $PIXEL et part au Hall of Fame avec sa timelap
 
 Tous ces chiffres se règlent par variables d'environnement (voir `.env.example`).
 
+**Limite connue :** comme le solde est relu toutes les 30 s par wallet, quelqu'un
+qui fait passer les mêmes tokens d'un wallet à l'autre peut cumuler les cadences
+pendant ces 30 s. Ça coûte des frais de transaction à chaque transfert et ça reste
+marginal face aux vrais holders ; le corriger demanderait de lire l'historique des
+transactions de chaque wallet.
+
 ## Lancer en local (mode test, soldes fictifs)
 
 ```bash

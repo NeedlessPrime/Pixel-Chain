@@ -24,6 +24,9 @@ describe('loadConfig', () => {
     expect(loadConfig({ TOKEN_MINT: MINT }).mode).toBe('live');
     expect(loadConfig({ TOKEN_MINT: MINT, MODE: 'mock' }).mode).toBe('mock');
     expect(loadConfig({ TOKEN_MINT: MINT, BUY_URL: 'https://x.test' }).token.buyUrl).toBe('https://x.test');
+    expect(() => loadConfig({ BUY_URL: 'javascript:alert(1)' })).toThrow(/https/);
+    expect(() => loadConfig({ BUY_URL: 'http://x.test' })).toThrow(/https/);
+    expect(() => loadConfig({ BUY_URL: 'not a url' })).toThrow(ConfigError);
     expect(() => loadConfig({ TOKEN_MINT: 'nope' })).toThrow(/TOKEN_MINT/);
   });
 

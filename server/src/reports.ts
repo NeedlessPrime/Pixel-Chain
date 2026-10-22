@@ -20,7 +20,7 @@ export class ReportStore {
   private nextId = 1;
 
   /** Adds an open report, unless the wallet or everyone together already has too many open. */
-  add(wallet: string, area: NewReport, now: number): AddReportResult {
+  add(wallet: string, area: NewReport, seasonId: string, now: number): AddReportResult {
     let open = 0;
     let mine = 0;
     for (const r of this.reports) {
@@ -30,7 +30,7 @@ export class ReportStore {
     }
     if (mine >= MAX_OPEN_REPORTS_PER_WALLET) return { ok: false, limit: 'wallet' };
     if (open >= MAX_OPEN_REPORTS) return { ok: false, limit: 'global' };
-    const report: Report = { id: String(this.nextId++), ...area, wallet, createdAt: now, status: 'open' };
+    const report: Report = { id: String(this.nextId++), ...area, wallet, seasonId, createdAt: now, status: 'open' };
     this.reports.push(report);
     return { ok: true, report };
   }
@@ -55,7 +55,8 @@ export class ReportStore {
 
   restore(snap: ReportsSnapshot): void {
     this.nextId = snap.nextId;
-    this.reports = snap.reports.map((r) => ({ ...r }));
+    // Reports saved before seasonId existed belong to an unknown season.
+    this.reports = snap.reports.map((r) => ({ ...r, seasonId: r.seasonId ?? '' }));
   }
 
   private dropOldResolved(): void {
