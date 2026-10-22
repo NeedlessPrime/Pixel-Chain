@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { createApp } from './app';
 import { ConfigError, loadConfig, type ServerConfig } from './config';
 
@@ -28,6 +29,14 @@ async function main(): Promise<void> {
     log.warn(
       '!!! MODE=mock with TOKEN_MINT set: balances are FAKE and anyone can give themselves any balance via ' +
         '/api/dev/balance. Remove MODE=mock (a mint defaults to live) before opening the server to players. !!!',
+    );
+  }
+  // On Railway the container disk is wiped on every deploy: only a volume mounted on DATA_DIR keeps the canvas.
+  const volume = process.env.RAILWAY_VOLUME_MOUNT_PATH;
+  if (process.env.RAILWAY_PROJECT_ID && (!volume || path.resolve(volume) !== config.dataDir)) {
+    log.warn(
+      `!!! Railway: no volume mounted on ${config.dataDir}${volume ? ` (volume is on ${volume})` : ''}. ` +
+        'The canvas, seasons and Hall of Fame will be LOST on the next deploy: attach a volume mounted at /data. !!!',
     );
   }
 

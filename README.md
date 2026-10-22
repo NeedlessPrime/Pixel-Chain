@@ -57,6 +57,11 @@ Pour signer les toiles avec ton propre logo, dépose un PNG à fond transparent 
 
 ## Déployer
 
+**Le plus simple : Railway.** Le guide pas à pas, avec les coûts et les pièges à
+éviter, est dans [`docs/DEPLOIEMENT.md`](docs/DEPLOIEMENT.md).
+
+Ailleurs, n'importe quel hébergeur Docker convient :
+
 ```bash
 docker build -t pixel .
 docker run -d -p 127.0.0.1:8787:8787 -v pixel-data:/data --env-file .env pixel
@@ -82,7 +87,11 @@ HTTPS — et, derrière lui :
 shared/   règles communes : palette, paliers, message de connexion, protocole, format timelapse
 server/   Node 22 + Fastify + WebSocket : soldes Solana, cooldowns, saisons, archives, modération
 web/      Vite + TypeScript : toile, wallets, HUD, Hall of Fame, admin
-docs/ARCHITECTURE.md   le contrat technique complet (API, messages temps réel, persistance)
+docs/
+  DEPLOIEMENT.md     mettre le jeu en ligne sur Railway (pas à pas, coûts, dépannage)
+  ARCHITECTURE.md    le contrat technique complet (API, messages temps réel, persistance)
+Dockerfile, railway.json   l'image à déployer et sa config Railway
+.env.example               toutes les variables, commentées
 ```
 
 ```bash
