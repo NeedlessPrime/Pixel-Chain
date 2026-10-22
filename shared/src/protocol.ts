@@ -139,6 +139,11 @@ export interface Report {
   status: 'open' | 'resolved';
 }
 
+/** Admin: GET /api/admin/owners?x=&y=&w=&h= — who painted the pixels of an area (most pixels first; empty cells and the logo are left out). */
+export interface AreaOwners {
+  owners: { wallet: string; faction: string | null; pixels: number }[];
+}
+
 export type PlaceErrorCode =
   | 'unauthenticated'
   | 'cooldown'

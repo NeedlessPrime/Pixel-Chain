@@ -6,11 +6,12 @@ import {
   PALETTE,
   isValidWallet,
   shortWallet,
+  type AreaOwners,
   type PublicConfig,
   type Report,
 } from '@pixel/shared';
 import { ApiRequestError, api, fetchCanvas, request, type CanvasSnapshot } from './api';
-import { fmtDateTime, fmtInt } from './format';
+import { fmtCount, fmtDateTime, fmtInt } from './format';
 import { errorMessage } from './messages';
 import { $, h, setChildren } from './ui/dom';
 import { logo } from './ui/logo';
@@ -186,6 +187,7 @@ function reportsSection(): Node[] {
 
 function reportCard(r: Report): HTMLElement {
   const inspect = h('div', { class: 'inspect small muted' }, 'Clique un pixel de l’aperçu pour voir son auteur.');
+  const owners = h('div', { class: 'small', hidden: true, style: { display: 'grid', gap: '6px' } });
   return h(
     'article',
     { class: `report card ${r.status === 'resolved' ? 'is-resolved' : ''}` },
@@ -202,6 +204,7 @@ function reportCard(r: Report): HTMLElement {
       h('p', { class: 'small muted' }, `${fmtDateTime(r.createdAt)} · par ${shortWallet(r.wallet)}`),
       h('blockquote', { class: 'reason' }, r.reason),
       inspect,
+      owners,
       h(
         'div',
         { class: 'actions' },
@@ -214,6 +217,7 @@ function reportCard(r: Report): HTMLElement {
             }
           },
         }, 'Effacer la zone'),
+        h('button', { class: 'btn btn-sm', type: 'button', onclick: () => void listOwners(r, owners) }, 'Qui a dessiné ici ?'),
         r.status === 'open'
           ? h('button', {
               class: 'btn btn-sm',
@@ -275,6 +279,33 @@ async function inspectCell(x: number, y: number, out: HTMLElement): Promise<void
       h('span', { class: 'actions' }, banButton(wallet, false, 'Bannir'), banButton(wallet, true, 'Bannir + effacer')),
     );
   } catch (err) {
+    setChildren(out, errorMessage(err));
+  }
+}
+
+/** Every wallet that owns pixels in the reported area, with ban buttons. */
+async function listOwners(r: Report, out: HTMLElement): Promise<void> {
+  out.hidden = false;
+  setChildren(out, 'Recherche des auteurs…');
+  try {
+    const { owners } = await adminGet<AreaOwners>(`/api/admin/owners?x=${r.x}&y=${r.y}&w=${r.w}&h=${r.h}`);
+    if (!owners.length) return setChildren(out, 'Aucun pixel de joueur dans cette zone.');
+    setChildren(
+      out,
+      owners.map((o) =>
+        h(
+          'div',
+          { class: 'inspect' },
+          h('span', null, h('code', { title: o.wallet }, shortWallet(o.wallet)), o.faction ? ` [${o.faction}]` : '', ` · ${fmtCount(o.pixels, 'pixel')}`),
+          h('span', { class: 'actions' }, banButton(o.wallet, false, 'Bannir'), banButton(o.wallet, true, 'Bannir + effacer')),
+        ),
+      ),
+    );
+  } catch (err) {
+    if (isAuthError(err)) {
+      saveToken(null);
+      return renderLogin('Jeton refusé.');
+    }
     setChildren(out, errorMessage(err));
   }
 }

@@ -252,6 +252,34 @@ describe('admin routes', () => {
   });
 });
 
+describe('admin owners lookup', () => {
+  it('lists who painted an area, most pixels first, without empty cells or the logo', async () => {
+    app = await startTestApp();
+    const [alice, bob] = [newWallet().wallet, newWallet().wallet];
+    for (const w of [alice, bob]) app.service.setMockBalance(w, 1e6);
+    expect(await app.service.setFaction(bob, 'Bleus')).toEqual({ ok: true });
+    await app.service.place(bob, 1, 1, 3);
+    await app.service.place(alice, 2, 1, 4);
+    app.clock.advance(5_000);
+    await app.service.place(alice, 2, 2, 4);
+    app.clock.advance(5_000);
+    await app.service.place(alice, 63, 47, 4); // outside the area below
+    app.game.stamp({ width: 1, height: 1, pixels: Uint8Array.from([5]) }, 0, 0, app.clock.now());
+
+    const owners = (q: string) => app.http.inject({ url: `/api/admin/owners?${q}`, headers: ADMIN });
+    expect((await owners('x=0&y=0&w=4&h=4')).json()).toEqual({
+      owners: [{ wallet: alice, faction: null, pixels: 2 }, { wallet: bob, faction: 'Bleus', pixels: 1 }],
+    });
+    // Clipped to the canvas.
+    expect((await owners('x=63&y=47&w=64&h=64')).json()).toEqual({ owners: [{ wallet: alice, faction: null, pixels: 1 }] });
+    expect((await owners('x=0&y=0&w=1&h=1')).json()).toEqual({ owners: [] });
+    for (const bad of ['x=0&y=0&w=65&h=1', 'x=0&y=0&w=0&h=1', 'x=64&y=0&w=1&h=1', 'x=0&y=0&w=1']) {
+      expect((await owners(bad)).statusCode).toBe(400);
+    }
+    expect((await app.http.inject('/api/admin/owners?x=0&y=0&w=1&h=1')).statusCode).toBe(403);
+  });
+});
+
 describe('static web build', () => {
   it('serves WEB_DIST, with /hall and /admin pages', async () => {
     const dir = await tempDir();

@@ -1,6 +1,6 @@
 import {
   EMPTY, isValidColor, tierForBalance,
-  type Leaderboard, type PixelInfo, type PlaceErrorCode, type Tier,
+  type AreaOwners, type Leaderboard, type PixelInfo, type PlaceErrorCode, type Tier,
 } from '@pixel/shared';
 import { PlacementLog } from './log';
 
@@ -290,6 +290,23 @@ export class Game {
       placedAt: owner === NO_OWNER ? null : this.startedAt + this.times[i]! * 1000,
       system: owner === SYSTEM_OWNER,
     };
+  }
+
+  /** Players owning cells in a rectangle (clipped to the canvas), most cells first. */
+  ownersIn(x: number, y: number, w: number, h: number): AreaOwners['owners'] {
+    const counts = new Map<number, number>();
+    for (let yy = Math.max(0, y); yy < Math.min(this.height, y + h); yy++) {
+      for (let xx = Math.max(0, x); xx < Math.min(this.width, x + w); xx++) {
+        const owner = this.owners[yy * this.width + xx]!;
+        if (owner >= FIRST_PLAYER_ID) counts.set(owner, (counts.get(owner) ?? 0) + 1);
+      }
+    }
+    return [...counts]
+      .flatMap(([id, pixels]) => {
+        const p = this.players.get(id);
+        return p ? [{ wallet: p.wallet, faction: p.faction, pixels }] : [];
+      })
+      .sort((a, b) => b.pixels - a.pixels || a.wallet.localeCompare(b.wallet));
   }
 
   /** Territory leaderboard, recomputed only when something changed. Banned wallets are hidden. */

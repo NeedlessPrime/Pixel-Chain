@@ -257,6 +257,14 @@ function adminRoutes(app: FastifyInstance, { service, config }: HttpDeps): void 
 
   app.get('/api/admin/reports', async () => service.reports());
 
+  app.get('/api/admin/owners', async (req) => {
+    const q = query(req);
+    const { width, height } = service.game;
+    const x = int(q.x, 0, width - 1);
+    const y = int(q.y, 0, height - 1);
+    return service.areaOwners(x, y, int(q.w, 1, MAX_REPORT_SIZE), int(q.h, 1, MAX_REPORT_SIZE));
+  });
+
   app.post('/api/admin/reports/:id/resolve', async (req) => {
     const { id } = req.params as { id: string };
     if (!service.resolveReport(id)) throw fail(404, 'not_found');

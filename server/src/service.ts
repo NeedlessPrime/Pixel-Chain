@@ -1,6 +1,6 @@
 import {
   EMPTY_COLOR, PALETTE, PROTOCOL_VERSION, effectiveCooldownMs, tierForBalance,
-  type Leaderboard, type MeInfo, type NonceResponse, type PixelInfo, type PlaceErrorCode,
+  type AreaOwners, type Leaderboard, type MeInfo, type NonceResponse, type PixelInfo, type PlaceErrorCode,
   type PublicConfig, type Report, type SeasonArchive, type Tier, type VerifyResponse,
 } from '@pixel/shared';
 import type { ArchiveFile, ArchiveStore } from './archive';
@@ -218,6 +218,11 @@ export class PixelService {
 
   reports(): Report[] {
     return this.d.reports.list();
+  }
+
+  /** Who painted the cells of an area (clipped to the canvas). */
+  areaOwners(x: number, y: number, w: number, h: number): AreaOwners {
+    return { owners: this.d.game.ownersIn(x, y, w, h) };
   }
 
   resolveReport(id: string): boolean {
