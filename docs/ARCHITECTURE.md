@@ -41,11 +41,15 @@ installed by `npm install` at the root — avoid adding new ones.
 
 ### Configuration (environment variables)
 
+Read from the environment, then from `.env` at the repo root if it exists
+(`node --env-file-if-exists`; variables already set win). Relative paths resolve from `server/`.
+
 | Var | Default | Meaning |
 |---|---|---|
 | `PORT` / `HOST` | `8787` / `0.0.0.0` | |
 | `MODE` | `mock` | `mock` or `live` |
-| `DATA_DIR` | `./data` | persistence directory |
+| `DATA_DIR` | `server/data` | persistence directory |
+| `TRUST_PROXY` | `0` | `1` behind a reverse proxy, so rate limits and the login domain use the client's IP/host |
 | `PUBLIC_DOMAIN` | request `Host` | domain written in the login message |
 | `SESSION_SECRET` | random, persisted in `DATA_DIR/secret` | HMAC key for session tokens |
 | `ADMIN_TOKEN` | unset → admin API disabled | sent as `x-admin-token` |
@@ -77,7 +81,8 @@ In memory, per season:
 
 Persisted under `DATA_DIR` with atomic writes (write tmp + rename), every 10 s
 when dirty and on SIGINT/SIGTERM: `state.json`, `canvas.bin`, `owners.bin`,
-`times.bin`, `log-<seasonId>.bin`; archives in `archive/<seasonId>/{meta.json,image.png,timelapse.bin}`.
+`times.bin`; the season log `log-<seasonId>.bin` is append-only (a torn last record
+after a crash is dropped on load); archives in `archive/<seasonId>/{meta.json,image.png,timelapse.bin}`.
 Restart must restore the exact canvas, season and cooldowns.
 
 ### Placement (hot path, O(1))
@@ -117,24 +122,24 @@ The clock must be injectable (`now()` function) so tests can fast-forward.
 | `POST /api/auth/verify` | – | `VerifyRequest` → `VerifyResponse`. Verifies the ed25519 signature (tweetnacl) of the exact issued message with the wallet's public key |
 | `GET /api/me[?refresh=1]` | Bearer | `MeInfo`; `refresh=1` forces a balance re-read (max once per 10 s per wallet) |
 | `POST /api/me/faction` | Bearer | `{ faction: string \| null }` → `MeInfo`; 429 if changed < 1 h ago |
-| `POST /api/report` | Bearer | `ReportRequest` → `{ ok: true }`; area ≤ `MAX_REPORT_SIZE`; max 10 open reports per wallet |
+| `POST /api/report` | Bearer | `ReportRequest` → `{ ok: true }`; `w`, `h` each 1–`MAX_REPORT_SIZE`, clipped to the canvas; reason ≤ 300 chars; 429 `too_many_reports` past 10 open per wallet |
 | `GET /api/seasons` | – | `SeasonArchive[]`, newest first |
 | `GET /api/seasons/:id/image.png` | – | final image (1 px per cell; the client scales it with `image-rendering: pixelated`) |
 | `GET /api/seasons/:id/timelapse.bin` | – | `shared/src/timelapse.ts` format |
 | `POST /api/dev/balance` | Bearer, **mock mode only** (404 otherwise) | `{ balance: number }` → `MeInfo` |
 | `GET /api/admin/reports` | admin | `Report[]` (open first) |
 | `POST /api/admin/reports/:id/resolve` | admin | `{ ok: true }` |
-| `POST /api/admin/wipe` | admin | `{ x, y, w, h }` → cells become `EMPTY`, owner 0; broadcast as `px` |
-| `POST /api/admin/ban` | admin | `{ wallet, wipe?: boolean }`; `wipe` erases every cell it owns |
+| `POST /api/admin/wipe` | admin | `{ x, y, w, h }` → `{ ok: true, erased }`; cells become `EMPTY`, owner 0; broadcast as `px`. During the frozen break the archive is re-rendered too |
+| `POST /api/admin/ban` | admin | `{ wallet, wipe?: boolean }` → `{ ok: true, erased }`; `wipe` erases every cell it owns |
 | `POST /api/admin/unban` | admin | `{ wallet }` |
-| `POST /api/admin/season/end` | admin | end the live season now |
-| `POST /api/admin/season/start` | admin | skip the break and start the next season now |
+| `POST /api/admin/season/end` | admin | end the live season now (409 `season_frozen` if already frozen) |
+| `POST /api/admin/season/start` | admin | skip the break and start the next season now (409 `season_live` while a season runs) |
 | `POST /api/admin/resize` | admin | `{ width, height }` grow only, ≤ `MAX_CANVAS_SIZE`, keeps content top-left; broadcast `reload` |
 
 Session token: `base64url(JSON{ w: wallet, exp }) + "." + base64url(HMAC-SHA256)`,
 sent as `Authorization: Bearer <token>` (REST) or `{t:'auth'}` (WS). Admin token
-compared in constant time. REST rate limit (`@fastify/rate-limit`): 120 req/min per IP
-globally, 10/min on `/api/auth/*`.
+compared in constant time: wrong token → 403 `forbidden`, `ADMIN_TOKEN` unset → 404 `admin_disabled`. REST rate limit (`@fastify/rate-limit`): 120 req/min per IP
+across `/api` and `/ws` connections, one shared 10/min counter on `/api/auth/*`; 429 `rate_limited`.
 
 In `live` mode, balances come from JSON-RPC
 `getTokenAccountsByOwner(wallet, { mint }, { encoding: 'jsonParsed' })`, summing
@@ -145,7 +150,10 @@ Token-2022 mints). Plain `fetch`, 5 s timeout, no web3.js.
 
 JSON text frames, types `ClientMsg` / `ServerMsg`. On connect the server sends
 `hello`. Spectators receive everything except `ack`/`me`. Pixel changes are
-batched into one `px` frame every ~50 ms. `lb` every 5 s when changed, `online`
+batched into `px` frames every ~50 ms (≤ 4096 pixels per frame, so a big wipe
+spans several frames). `me` is also pushed (~5 s) when someone overwrites your
+pixels. Over 10 msg/s extra `place` get a `rate_limited` ack; over 30/s the socket
+is closed (1008); frames over 1 KB close it (1009). `lb` every 5 s when changed, `online`
 when the count changes (throttled to 1/s). Ping/pong keeps proxies happy.
 
 ## Web
