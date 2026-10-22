@@ -23,10 +23,16 @@ export class ApiRequestError extends Error {
 }
 
 let authToken: string | null = null;
+let onSessionRejected: (() => void) | null = null;
 
 /** Session token sent as `Authorization: Bearer` on authenticated calls. */
 export function setAuthToken(token: string | null): void {
   authToken = token;
+}
+
+/** Called when the server answers 401 to the current session token (expired or no longer valid). */
+export function setSessionRejectedHandler(fn: () => void): void {
+  onSessionRejected = fn;
 }
 
 export interface RequestOptions {
@@ -40,9 +46,10 @@ export interface RequestOptions {
 export async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = { ...opts.headers };
   if (opts.body !== undefined) headers['content-type'] = 'application/json';
+  const token = opts.auth ? authToken : null;
   if (opts.auth) {
-    if (!authToken) throw new ApiRequestError(401, 'unauthenticated', 'Connecte ton wallet pour continuer.');
-    headers.authorization = `Bearer ${authToken}`;
+    if (!token) throw new ApiRequestError(401, 'unauthenticated', 'Connecte ton wallet pour continuer.');
+    headers.authorization = `Bearer ${token}`;
   }
   let res: Response;
   try {
@@ -56,7 +63,11 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
     if (err instanceof DOMException && err.name === 'AbortError') throw err;
     throw new ApiRequestError(0, 'network', 'Serveur injoignable. Vérifie ta connexion.');
   }
-  if (!res.ok) throw await toApiError(res);
+  if (!res.ok) {
+    // Only for the token still in use: a late answer must not sign out a newer session.
+    if (res.status === 401 && token && token === authToken) onSessionRejected?.();
+    throw await toApiError(res);
+  }
   return (await res.json()) as T;
 }
 
@@ -93,7 +104,7 @@ export async function fetchCanvas(signal?: AbortSignal): Promise<CanvasSnapshot>
 }
 
 export const api = {
-  config: () => request<PublicConfig>('/api/config'),
+  config: (signal?: AbortSignal) => request<PublicConfig>('/api/config', { signal }),
   pixel: (x: number, y: number, signal?: AbortSignal) => request<PixelInfo>(`/api/pixel?x=${x}&y=${y}`, { signal }),
   leaderboard: () => request<Leaderboard>('/api/leaderboard'),
   seasons: () => request<SeasonArchive[]>('/api/seasons'),

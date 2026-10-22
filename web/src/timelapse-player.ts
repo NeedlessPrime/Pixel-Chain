@@ -53,6 +53,7 @@ export class TimelapsePlayer {
     this.rgba.fill(pack(emptyColor));
     palette.forEach((hex, i) => (this.rgba[i] = pack(hex)));
     this.rgba[EMPTY] = pack(emptyColor);
+    this.pixels.fill(this.rgba[EMPTY]!); // cells never painted are empty, not transparent
     this.seek(tl.count); // open on the final image
   }
 

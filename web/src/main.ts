@@ -1,7 +1,7 @@
 import './style.css';
 import './game.css';
 import { EMPTY_COLOR, PALETTE, type SeasonInfo } from '@pixel/shared';
-import { api, setAuthToken } from './api';
+import { api, setAuthToken, setSessionRejectedHandler } from './api';
 import { Board } from './board';
 import { CanvasView } from './canvas';
 import { serverNow } from './clock';
@@ -183,6 +183,20 @@ function signOut(): void {
   store.set({ session: null, me: null, authed: false });
   socket.setToken(null);
 }
+
+setSessionRejectedHandler(signOut);
+
+// Sign out when the token expires instead of letting the next action fail.
+let expiryTimer: ReturnType<typeof setTimeout> | undefined;
+store.subscribe((s, prev) => {
+  if (s.session === prev.session && s !== prev) return;
+  clearTimeout(expiryTimer);
+  if (!s.session) return;
+  expiryTimer = setTimeout(() => {
+    signOut();
+    toast('Session expirée : reconnecte ton wallet.', 'error');
+  }, s.session.expiresAt - serverNow());
+});
 
 /* ---------------- actions for the HUD ---------------- */
 

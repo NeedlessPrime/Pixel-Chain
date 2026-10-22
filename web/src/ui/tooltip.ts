@@ -87,8 +87,13 @@ export class PixelTooltip {
     }
   }
 
+  /** The whole canvas was reloaded: forget everything and redraw the card shown, if any. */
   clear(): void {
     this.cache.clear();
+    const cell = this.cell;
+    if (!cell) return;
+    this.cell = null;
+    this.show(cell);
   }
 
   /** Follow the cell after a pan/zoom; hide when it leaves the screen. */

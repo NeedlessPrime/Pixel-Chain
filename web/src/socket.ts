@@ -4,6 +4,7 @@ import { syncClock } from './clock';
 import type { Connection } from './store';
 
 type PxMsg = Extract<ServerMsg, { t: 'px' }>;
+type SeasonMsg = Extract<ServerMsg, { t: 'season' }>;
 export type PlaceOk = Extract<ServerMsg, { t: 'ack'; ok: true }>;
 export interface PlaceFailure {
   ok: false;
@@ -28,6 +29,10 @@ const PING_EVERY_MS = 20_000;
 /** No frame at all for this long (pings included) means the link is dead. */
 const SILENCE_LIMIT_MS = 50_000;
 const ACK_TIMEOUT_MS = 10_000;
+/** After `online` or the tab coming back, a ping must be answered this fast or the socket is replaced. */
+const PROBE_TIMEOUT_MS = 5_000;
+/** A stalled config/canvas request fails the sync (→ reconnect and retry) instead of hanging it. */
+const SNAPSHOT_TIMEOUT_MS = 15_000;
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_MAX_MS = 15_000;
 /** A seq gap triggers a resync, but never more often than this (guards against a resync loop). */
@@ -50,8 +55,11 @@ export class GameSocket {
 
   /** Seq of the last pixel applied; -1 until the first snapshot. */
   private seq = -1;
-  /** Non-null while a snapshot is being fetched: `px` frames wait here. */
-  private buffer: PxMsg[] | null = null;
+  /**
+   * Non-null while a snapshot is being fetched: `px` frames wait here, and so do
+   * `season` frames, which must win over the older `config.season` of the snapshot.
+   */
+  private buffer: (PxMsg | SeasonMsg)[] | null = null;
   /** Bumped on every sync/close so a stale fetch never applies its result. */
   private syncGen = 0;
   private lastGapResyncAt = 0;
@@ -61,9 +69,9 @@ export class GameSocket {
   start(): void {
     this.connect();
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') this.reconnectNowIfDown();
+      if (document.visibilityState === 'visible') this.checkLink();
     });
-    window.addEventListener('online', () => this.reconnectNowIfDown());
+    window.addEventListener('online', () => this.checkLink());
   }
 
   /** Attach (or forget) the session. Dropping a session needs a fresh, anonymous socket. */
@@ -86,6 +94,8 @@ export class GameSocket {
       const timer = setTimeout(() => {
         this.acks.delete(id);
         resolve({ ok: false, code: 'timeout', message: '' });
+        // No ack in time: the link is probably half-open. Start over with a fresh socket and a resync.
+        this.drop();
       }, ACK_TIMEOUT_MS);
       this.acks.set(id, { resolve, timer });
       this.send({ t: 'place', x, y, c, id });
@@ -131,6 +141,10 @@ export class GameSocket {
         if (this.buffer) this.buffer.push(msg);
         else this.applyPx(msg);
         return;
+      case 'season':
+        if (this.buffer) this.buffer.push(msg);
+        else this.handlers.onMessage(msg);
+        return;
       case 'ack': {
         if (msg.id === undefined) return;
         const pending = this.acks.get(msg.id);
@@ -155,17 +169,20 @@ export class GameSocket {
     const gen = ++this.syncGen;
     this.buffer = [];
     try {
-      const config = await api.config();
+      const config = await api.config(AbortSignal.timeout(SNAPSHOT_TIMEOUT_MS));
       if (gen !== this.syncGen) return;
       syncClock(config.serverTime);
-      const canvas = await fetchCanvas();
+      const canvas = await fetchCanvas(AbortSignal.timeout(SNAPSHOT_TIMEOUT_MS));
       if (gen !== this.syncGen) return;
       this.handlers.onSnapshot(config, canvas);
       this.attempt = 0; // only a full sync proves the link works; a bare hello does not
       this.seq = canvas.seq;
       const buffered = this.buffer;
       this.buffer = null;
-      for (const m of buffered) this.applyPx(m);
+      for (const m of buffered) {
+        if (m.t === 'px') this.applyPx(m);
+        else this.handlers.onMessage(m);
+      }
     } catch (err) {
       if (gen !== this.syncGen) return;
       this.handlers.onSyncError(err);
@@ -248,7 +265,18 @@ export class GameSocket {
     this.reconnectTimer = null;
   }
 
-  private reconnectNowIfDown(): void {
-    if (!this.ws) this.connect();
+  /**
+   * The network changed or the tab woke up: reconnect now if down, and probe an
+   * open socket, which may be half-open (no close event will ever come).
+   */
+  private checkLink(): void {
+    const ws = this.ws;
+    if (!ws) return this.connect();
+    if (!this.isOpen()) return;
+    const sentAt = Date.now();
+    this.send({ t: 'ping' });
+    setTimeout(() => {
+      if (this.ws === ws && this.lastFrameAt < sentAt) this.drop();
+    }, PROBE_TIMEOUT_MS);
   }
 }

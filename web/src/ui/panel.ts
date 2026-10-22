@@ -40,6 +40,8 @@ export function mountPanel(root: HTMLElement, store: Store<GameState>, actions: 
   );
 
   const cooldownText = h('span');
+  /** Kept out of renderAccount, which rebuilds the button on every `me` change. */
+  let refreshLockedUntil = 0;
   store.subscribe((s, prev) => {
     if (s === prev || s.me !== prev.me || s.session !== prev.session || s.config !== prev.config || s.season !== prev.season) {
       renderAccount(s);
@@ -67,11 +69,17 @@ export function mountPanel(root: HTMLElement, store: Store<GameState>, actions: 
     }
     const me = s.me;
     const refresh = h('button', { class: 'btn btn-sm', type: 'button' }, 'Actualiser');
-    refresh.addEventListener('click', async () => {
-      refresh.disabled = true;
-      await actions.refreshBalance();
-      setTimeout(() => (refresh.disabled = false), 10_000); // server allows one refresh per 10 s
+    const lockRefresh = () => {
+      const wait = refreshLockedUntil - Date.now();
+      refresh.disabled = wait > 0;
+      if (wait > 0) setTimeout(() => (refresh.disabled = false), wait);
+    };
+    refresh.addEventListener('click', () => {
+      refreshLockedUntil = Date.now() + 10_000; // server allows one refresh per 10 s
+      lockRefresh();
+      void actions.refreshBalance();
     });
+    lockRefresh();
     setChildren(
       account,
       h(

@@ -85,6 +85,17 @@ export function minHolding(config: PublicConfig): number {
   return Math.min(...config.tiers.map((t) => t.minBalance));
 }
 
+/** The configured buy link, only if it is https (a `javascript:` URL would run in the game's origin). */
+export function buyUrl(config: PublicConfig | null): string | null {
+  const url = config?.token.buyUrl;
+  if (!url) return null;
+  try {
+    return new URL(url).protocol === 'https:' ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 /** What the HUD can ask the game to do (implemented in main.ts). */
 export interface GameActions {
   /** Wallet picker when signed out, account menu when signed in. */
