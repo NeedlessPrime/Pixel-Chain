@@ -55,6 +55,8 @@ export function parseClientMsg(raw: string): ClientMsg | null {
 /** All live sockets: per-socket protocol handling plus the batched broadcasts. */
 export class Hub {
   private readonly clients = new Set<Client>();
+  /** Authenticated sockets by wallet, so a `me` push does not scan every socket. */
+  private readonly byWallet = new Map<string, Set<Client>>();
   private timers: NodeJS.Timeout[] = [];
   private sentOnline = 0;
   private sentLbVersion = -1;
@@ -90,6 +92,7 @@ export class Hub {
     this.flushPixels();
     for (const client of this.clients) client.socket.close(1001, 'server shutdown');
     this.clients.clear();
+    this.byWallet.clear();
   }
 
   attach(socket: WebSocket): void {
@@ -99,7 +102,10 @@ export class Hub {
     this.clients.add(client);
     socket.on('message', (data, isBinary) => this.receive(client, data, isBinary));
     socket.on('pong', () => (client.alive = true));
-    socket.on('close', () => this.clients.delete(client));
+    socket.on('close', () => {
+      this.clients.delete(client);
+      this.setWallet(client, null);
+    });
     socket.on('error', () => socket.terminate());
     const { game, season } = this.service;
     this.send(client, { t: 'hello', protocolVersion: PROTOCOL_VERSION, online: this.clients.size, seq: game.seq, season: season.info() });
@@ -145,12 +151,25 @@ export class Hub {
   private async authenticate(client: Client, token: string): Promise<void> {
     const session = this.service.session(token);
     if (!session) {
-      client.wallet = null;
+      this.setWallet(client, null);
       return this.send(client, { t: 'authed', ok: false, code: 'unauthenticated' });
     }
-    client.wallet = session.wallet;
+    this.setWallet(client, session.wallet);
     client.sessionExpiresAt = session.expiresAt;
     this.send(client, { t: 'authed', ok: true, me: await this.service.meForSocket(session.wallet) });
+  }
+
+  /** Moves a socket between the per-wallet sets (a closed socket is never added back). */
+  private setWallet(client: Client, wallet: string | null): void {
+    if (client.wallet) {
+      const sockets = this.byWallet.get(client.wallet);
+      sockets?.delete(client);
+      if (sockets?.size === 0) this.byWallet.delete(client.wallet);
+    }
+    client.wallet = wallet;
+    if (!wallet || !this.clients.has(client)) return;
+    const sockets = this.byWallet.get(wallet) ?? new Set<Client>();
+    this.byWallet.set(wallet, sockets.add(client));
   }
 
   /** The socket's wallet while its session token is still valid. */
@@ -197,9 +216,10 @@ export class Hub {
 
   /** `me` to the sockets of one wallet, or of every authenticated wallet. */
   private pushMe(wallet?: string): void {
-    for (const client of this.clients) {
+    const targets = wallet === undefined ? this.clients : this.byWallet.get(wallet);
+    for (const client of targets ?? []) {
       const w = this.walletOf(client);
-      if (w && (wallet === undefined || w === wallet)) this.send(client, { t: 'me', me: this.service.meCached(w) });
+      if (w) this.send(client, { t: 'me', me: this.service.meCached(w) });
     }
   }
 

@@ -105,6 +105,51 @@ describe('WebSocket /ws', () => {
     socket.ws.close();
   });
 
+  it('pushes me only to the sockets of that wallet, following re-auth, failed auth and close', async () => {
+    app = await startTestApp({ timers: true });
+    const base = await app.listen();
+    const [alice, bob] = [newWallet().wallet, newWallet().wallet];
+    const token = (wallet: string) => createSessionToken(wallet, 'test-secret-test-secret-test-secret', app.clock.now()).token;
+    const [a1, a2, b] = [connect(base), connect(base), connect(base)];
+    await Promise.all([a1, a2, b].map((s) => s.next('hello')));
+    const auth = async (s: ReturnType<typeof connect>, t: string) => {
+      s.send({ t: 'auth', token: t });
+      await s.next('authed');
+    };
+    await Promise.all([auth(a1, token(alice)), auth(a2, token(alice)), auth(b, token(bob))]);
+    /** Frames still unread once the socket answered a ping (so nothing is in flight). */
+    const pending = async (s: ReturnType<typeof connect>) => {
+      s.send({ t: 'ping' });
+      await s.next('pong');
+      return s.received.filter((m) => m.t === 'me').length;
+    };
+
+    app.events.emit('me', alice);
+    await a1.next('me', (m) => m.me.wallet === alice);
+    await a2.next('me', (m) => m.me.wallet === alice);
+    expect(await pending(b)).toBe(0);
+
+    await auth(a2, token(bob));
+    app.events.emit('me', alice);
+    app.events.emit('me', bob);
+    await a1.next('me');
+    await a2.next('me', (m) => m.me.wallet === bob);
+    await b.next('me', (m) => m.me.wallet === bob);
+    expect(await Promise.all([pending(a1), pending(a2), pending(b)])).toEqual([0, 0, 0]);
+
+    await auth(b, 'forged.token');
+    app.events.emit('me', bob);
+    await a2.next('me');
+    expect(await pending(b)).toBe(0);
+
+    const byWallet = (app.hub as unknown as { byWallet: Map<string, Set<unknown>> }).byWallet;
+    a1.ws.close();
+    await vi.waitFor(() => expect([...byWallet.keys()]).toEqual([bob]));
+    a2.ws.close();
+    await vi.waitFor(() => expect(byWallet.size).toBe(0));
+    b.ws.close();
+  });
+
   it('refuses bad tokens and unauthenticated placements', async () => {
     app = await startTestApp({ timers: true });
     const socket = connect(await app.listen());
