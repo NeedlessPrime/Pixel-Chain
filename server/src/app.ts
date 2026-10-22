@@ -136,6 +136,7 @@ export async function createApp(opts: AppOptions): Promise<PixelApp> {
       http.log.error({ err }, 'saving the state failed');
     }
   };
+  if (loaded?.legacy) await save(true);
 
   let ticking: Promise<void> | null = null;
   const tick = (): Promise<void> => {

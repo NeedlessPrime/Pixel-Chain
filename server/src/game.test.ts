@@ -174,6 +174,23 @@ describe('canvas writes', () => {
     expect(copy.log.count).toBe(2);
     expect(() => Game.restore(game.snapshot(), new Uint8Array(3), game.owners, game.times, new Uint8Array())).toThrow();
   });
+
+  it('restores a canvas that references players the snapshot does not know', () => {
+    const game = new Game(4, 4, T0);
+    game.place(alice, 0, 0, 1, ctx());
+    const older = game.snapshot();
+    game.place(bob, 1, 0, 2, ctx());
+    const copy = Game.restore(older, game.colors.slice(), game.owners.slice(), game.times.slice(), game.log.bytes());
+    expect(copy.pixelInfo(1, 0)).toMatchObject({ color: 2, wallet: null, placedAt: null });
+    expect(copy.player(alice)?.owned).toBe(1);
+    const carol = newWallet().wallet;
+    copy.place(carol, 2, 0, 3, ctx());
+    expect(copy.player(carol)).toMatchObject({ id: 3, owned: 1 });
+    expect(copy.pixelInfo(1, 0).wallet).toBeNull();
+    // nextPlayerId never falls behind a known player id.
+    const behind = Game.restore({ ...game.snapshot(), nextPlayerId: 2 }, game.colors, game.owners, game.times, new Uint8Array());
+    expect(behind.ensurePlayer(carol).id).toBe(4);
+  });
 });
 
 describe('factions and leaderboard', () => {

@@ -115,13 +115,15 @@ export class Game {
     }
     const game = new Game(snap.width, snap.height, snap.startedAt);
     Object.assign(game, { colors, owners, times, seq: snap.seq, totalPlacements: snap.totalPlacements });
-    game.nextPlayerId = snap.nextPlayerId;
     game.log = new PlacementLog(log);
-    for (const p of snap.players) game.addPlayer({ ...p, owned: 0 });
-    for (const wallet of snap.banned) game.banned.add(wallet);
-    for (const owner of owners) {
-      if (owner >= FIRST_PLAYER_ID) game.players.get(owner)!.owned++;
+    let maxId = 0;
+    for (const p of snap.players) {
+      game.addPlayer({ ...p, owned: 0 });
+      maxId = Math.max(maxId, p.id);
     }
+    game.nextPlayerId = Math.max(FIRST_PLAYER_ID, snap.nextPlayerId, maxId + 1);
+    for (const wallet of snap.banned) game.banned.add(wallet);
+    game.recountOwned();
     return game;
   }
 
@@ -335,6 +337,17 @@ export class Game {
     this.players.set(player.id, player);
     this.byWallet.set(player.wallet, player);
     return player;
+  }
+
+  /** Derives `owned` from the canvas. A cell of a player the state does not know (torn save) becomes unowned. */
+  private recountOwned(): void {
+    for (let i = 0; i < this.owners.length; i++) {
+      const owner = this.owners[i]!;
+      if (owner < FIRST_PLAYER_ID) continue;
+      const player = this.players.get(owner);
+      if (player) player.owned++;
+      else this.owners[i] = NO_OWNER;
+    }
   }
 
   private erase(x: number, y: number, now: number): boolean {

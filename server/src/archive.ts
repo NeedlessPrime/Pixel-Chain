@@ -4,7 +4,7 @@ import { PNG } from 'pngjs';
 import { EMPTY, EMPTY_COLOR, PALETTE, encodeTimelapse, hexToRgb, type SeasonArchive } from '@pixel/shared';
 import type { Game } from './game';
 import { scrubModerated } from './log';
-import { writeFileAtomic } from './persistence';
+import { removeTempFiles, writeFileAtomic } from './persistence';
 
 /** How many factions/players the Hall of Fame keeps per season. */
 const ARCHIVE_TOP = 10;
@@ -75,6 +75,7 @@ export class ArchiveStore {
   async load(): Promise<void> {
     const entries = await readdir(this.dir).catch(() => [] as string[]);
     for (const id of entries.filter((e) => SEASON_ID_RE.test(e))) {
+      await removeTempFiles(path.join(this.dir, id));
       try {
         const meta = JSON.parse(await readFile(path.join(this.dir, id, 'meta.json'), 'utf8')) as SeasonArchive;
         this.metas.set(id, meta);

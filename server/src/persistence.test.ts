@@ -1,7 +1,7 @@
-import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, readFile, rm, truncate, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { loadOrCreateSecret } from './persistence';
+import { STATE_VERSION, loadOrCreateSecret, writeFileAtomic } from './persistence';
 import { fakeClock, newWallet, removeDir, startTestApp, tempDir } from './test-helpers';
 
 let dir = '';
@@ -30,7 +30,7 @@ describe('persistence', () => {
       banned: [...first.game.banned],
     };
     await first.close();
-    expect((await readdir(dir)).sort()).toEqual(['canvas.bin', 'log-s1.bin', 'owners.bin', 'state.json', 'times.bin']);
+    expect((await readdir(dir)).sort()).toEqual(['log-s1.bin', 'snapshot.bin']);
 
     const second = await startTestApp({ dir, clock });
     expect(second.game.colors).toEqual(before.colors);
@@ -61,14 +61,94 @@ describe('persistence', () => {
   it('only rewrites the state when something changed', async () => {
     dir = await tempDir();
     const app = await startTestApp({ dir });
-    const stateFile = path.join(dir, 'state.json');
+    const snapshotFile = path.join(dir, 'snapshot.bin');
     await app.save();
-    await writeFile(stateFile, 'sentinel');
+    await writeFile(snapshotFile, 'sentinel');
     await app.save();
-    expect(await readFile(stateFile, 'utf8')).toBe('sentinel');
+    expect(await readFile(snapshotFile, 'utf8')).toBe('sentinel');
     app.service.setMockBalance(newWallet().wallet, 1);
     await app.save();
-    expect(JSON.parse(await readFile(stateFile, 'utf8')).version).toBe(1);
+    expect((await readFile(snapshotFile)).length).toBeGreaterThan(64 * 48 * 9);
+    await app.close();
+  });
+
+  it('boots from a torn legacy layout (canvas newer than state.json) and migrates it to snapshot.bin', async () => {
+    dir = await tempDir();
+    const clock = fakeClock();
+    const app = await startTestApp({ dir, clock });
+    const [a, b, c] = [newWallet().wallet, newWallet().wallet, newWallet().wallet];
+    for (const w of [a, b, c]) app.service.setMockBalance(w, 1e6);
+    await app.service.place(a, 1, 1, 3);
+    const stateJson = JSON.stringify({
+      version: STATE_VERSION, season: app.season.state, game: app.game.snapshot(), reports: { nextId: 1, reports: [] },
+    });
+    // b is painted on the binaries but unknown to the older state.json, as after a crash between the renames.
+    await app.service.place(b, 2, 2, 4);
+    const binaries = { colors: app.game.colors.slice(), owners: app.game.owners.slice(), times: app.game.times.slice() };
+    await app.close();
+    await rm(path.join(dir, 'snapshot.bin'));
+    const file = (name: string) => path.join(dir, name);
+    await writeFile(file('state.json'), stateJson);
+    await writeFile(file('canvas.bin'), binaries.colors);
+    await writeFile(file('owners.bin'), new Uint8Array(binaries.owners.buffer));
+    await writeFile(file('times.bin'), new Uint8Array(binaries.times.buffer));
+
+    const second = await startTestApp({ dir, clock });
+    expect(second.service.pixelInfo(1, 1)).toMatchObject({ color: 3, wallet: a });
+    expect(second.service.pixelInfo(2, 2)).toMatchObject({ color: 4, wallet: null, placedAt: null });
+    expect(second.game.player(a)?.owned).toBe(1);
+    expect((await readdir(dir)).sort()).toEqual(['log-s1.bin', 'snapshot.bin']);
+    // The next new player gets a fresh id and does not inherit the orphaned cell.
+    second.service.setMockBalance(c, 1e6);
+    expect(await second.service.place(c, 5, 5, 1)).toMatchObject({ ok: true, me: { owned: 1 } });
+    await second.close();
+
+    const third = await startTestApp({ dir, clock });
+    expect(third.service.pixelInfo(5, 5)).toMatchObject({ wallet: c });
+    expect(third.service.pixelInfo(2, 2)).toMatchObject({ color: 4, wallet: null });
+    await third.close();
+  });
+
+  it('drops log records written after the last snapshot landed', async () => {
+    dir = await tempDir();
+    const clock = fakeClock();
+    const app = await startTestApp({ dir, clock });
+    const player = newWallet().wallet;
+    app.service.setMockBalance(player, 1e6);
+    await app.service.place(player, 1, 1, 3);
+    await app.close();
+    const logFile = path.join(dir, 'log-s1.bin');
+    // A save appended these, then crashed before renaming its snapshot.
+    await appendFile(logFile, new Uint8Array([2, 0, 2, 0, 4, 9, 9]));
+
+    const second = await startTestApp({ dir, clock });
+    expect(second.game.log.count).toBe(1);
+    await second.save(true);
+    expect((await readFile(logFile)).length).toBe(5);
+    await second.close();
+  });
+
+  it('refuses a snapshot whose size does not match its canvas', async () => {
+    dir = await tempDir();
+    const app = await startTestApp({ dir });
+    await app.close();
+    await truncate(path.join(dir, 'snapshot.bin'), 1000);
+    await expect(startTestApp({ dir })).rejects.toThrow(/snapshot\.bin/);
+  });
+
+  it('never leaves temporary files behind', async () => {
+    dir = await tempDir();
+    // A failed write removes its temporary file…
+    await mkdir(path.join(dir, 'taken'));
+    await expect(writeFileAtomic(path.join(dir, 'taken'), 'x')).rejects.toThrow();
+    expect(await readdir(dir)).toEqual(['taken']);
+    // …and boot removes those of writes a crash interrupted.
+    await writeFile(path.join(dir, 'snapshot.bin.123.4.tmp'), 'half');
+    await mkdir(path.join(dir, 'archive', 's1'), { recursive: true });
+    await writeFile(path.join(dir, 'archive', 's1', 'image.png.123.5.tmp'), 'half');
+    const app = await startTestApp({ dir });
+    expect((await readdir(dir)).some((f) => f.endsWith('.tmp'))).toBe(false);
+    expect(await readdir(path.join(dir, 'archive', 's1'))).toEqual([]);
     await app.close();
   });
 
