@@ -1,0 +1,170 @@
+/* Moderation page. */
+
+.admin-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.admin-badge {
+  padding: 2px 6px;
+  border: 2px solid var(--yellow);
+  color: var(--yellow);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.login {
+  max-width: 420px;
+  margin: 8vh auto 0;
+  padding: 20px;
+}
+.login p {
+  margin: 0;
+}
+.error-text {
+  color: var(--danger);
+  font-weight: 700;
+}
+.pad {
+  padding: 16px;
+}
+
+.admin-grid {
+  display: grid;
+  gap: 24px;
+}
+.admin-tools {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+}
+
+.section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.section-title {
+  font-family: var(--font-display);
+  font-size: 10px;
+  line-height: 1.6;
+  text-transform: uppercase;
+}
+.tool .section-title {
+  margin-bottom: 12px;
+  color: var(--accent);
+}
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.check input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.report-list {
+  display: grid;
+  gap: 12px;
+}
+.report {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+.report.is-resolved {
+  opacity: 0.6;
+}
+.preview {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 2px solid var(--line);
+  image-rendering: pixelated;
+  cursor: crosshair;
+}
+.report-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.report-body p {
+  margin: 0;
+}
+.report-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.status {
+  padding: 0 6px;
+  border: 2px solid currentColor;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.status-open {
+  color: var(--yellow);
+}
+.status-resolved {
+  color: var(--green);
+}
+.reason {
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 4px solid var(--accent);
+  background: var(--bg);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.inspect {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.tool {
+  padding: 16px;
+}
+.tool p {
+  margin: 0 0 10px;
+}
+.grid-4,
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+@media (min-width: 640px) {
+  .report {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+  }
+  .grid-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1000px) {
+  .admin-grid {
+    grid-template-columns: minmax(0, 1fr) 360px;
+  }
+  .admin-tools .grid-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
