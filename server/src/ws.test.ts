@@ -1,8 +1,11 @@
 import { WebSocket } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NonceResponse, ServerMsg, VerifyResponse } from '@pixel/shared';
+import { createSessionToken } from './auth';
 import { newWallet, startTestApp, type TestApp } from './test-helpers';
 import { parseClientMsg } from './ws';
+
+const MINT = 'So11111111111111111111111111111111111111112';
 
 type Client = InstanceType<typeof WebSocket>;
 
@@ -71,6 +74,35 @@ describe('WebSocket /ws', () => {
 
     socket.ws.close();
     spectator.ws.close();
+  });
+
+  it('answers auth from the cached balance, so re-authenticating costs no RPC call', async () => {
+    let calls = 0;
+    app = await startTestApp({
+      timers: true,
+      env: { TOKEN_MINT: MINT },
+      balanceProvider: { fetchBalance: async () => (calls++, 2_000_000) },
+    });
+    const base = await app.listen();
+    const player = newWallet();
+    const { nonce, message } = await postJson<NonceResponse>(`${base}/api/auth/nonce`, { wallet: player.wallet });
+    const { token } = await postJson<VerifyResponse>(`${base}/api/auth/verify`, { wallet: player.wallet, nonce, signature: player.sign(message) });
+    expect(calls).toBe(1);
+    app.clock.advance(10 * 60_000); // well past the balance TTL
+
+    const socket = connect(base);
+    await socket.next('hello');
+    for (let i = 0; i < 3; i++) {
+      socket.send({ t: 'auth', token });
+      expect(await socket.next('authed')).toMatchObject({ ok: true, me: { balance: 2_000_000, tier: { id: 'whale' } } });
+    }
+    expect(calls).toBe(1);
+    // A wallet the cache has never seen (e.g. after a restart) is read once.
+    const stranger = createSessionToken(newWallet().wallet, 'test-secret-test-secret-test-secret', app.clock.now()).token;
+    socket.send({ t: 'auth', token: stranger });
+    expect(await socket.next('authed')).toMatchObject({ ok: true, me: { balance: 2_000_000 } });
+    expect(calls).toBe(2);
+    socket.ws.close();
   });
 
   it('refuses bad tokens and unauthenticated placements', async () => {

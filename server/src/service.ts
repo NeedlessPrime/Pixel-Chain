@@ -126,6 +126,14 @@ export class PixelService {
     return this.buildMe(wallet, this.d.balances.peek(wallet)?.balance ?? 0);
   }
 
+  /**
+   * MeInfo for a socket `auth`: the cached balance, so re-authenticating never costs an RPC call.
+   * Only a wallet the cache does not know yet (server restart, long absence) gets one read.
+   */
+  async meForSocket(wallet: string): Promise<MeInfo> {
+    return this.d.balances.peek(wallet) ? this.meCached(wallet) : this.me(wallet);
+  }
+
   /** MeInfo with the balance refreshed per the cache rules; the last known value if the RPC is down. */
   async me(wallet: string, forceRefresh = false): Promise<MeInfo> {
     try {

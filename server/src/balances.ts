@@ -72,6 +72,26 @@ export class RpcBalances implements BalanceProvider {
 
 export class BalanceUnavailableError extends Error {}
 
+/** Refills `ratePerSecond` tokens per second, up to `burst`. */
+export class TokenBucket {
+  private tokens: number;
+  private updatedAt: number;
+
+  constructor(private readonly ratePerSecond: number, private readonly burst: number, private readonly now: () => number) {
+    this.tokens = burst;
+    this.updatedAt = now();
+  }
+
+  take(): boolean {
+    const now = this.now();
+    this.tokens = Math.min(this.burst, this.tokens + (Math.max(0, now - this.updatedAt) / 1000) * this.ratePerSecond);
+    this.updatedAt = now;
+    if (this.tokens < 1) return false;
+    this.tokens--;
+    return true;
+  }
+}
+
 interface CacheEntry {
   balance: number;
   fetchedAt: number;
@@ -84,21 +104,36 @@ export interface BalanceCacheOptions {
   staleMaxMs?: number;
   /** Minimum delay between two forced refreshes of the same wallet. */
   forceIntervalMs?: number;
+  /** After a failed read, how long the provider is not asked again for that wallet. */
+  failureBackoffMs?: number;
+  /** Global cap on provider calls (bursts up to twice this); unset = unlimited (mock balances). */
+  maxCallsPerSecond?: number;
   /** Called when a refresh returns a different balance than the cached one. */
   onChange?: (wallet: string) => void;
 }
 
-/** Per-wallet balance cache with TTL, stale-on-error and rate-limited forced refreshes. */
+/**
+ * Per-wallet balance cache with TTL, stale-on-error and rate-limited forced
+ * refreshes. Provider calls are bounded per wallet (one at a time, none for a
+ * while after a failure) and globally (token bucket), so neither a flaky RPC
+ * nor many sessions can make the server hammer it.
+ */
 export class BalanceCache {
   private readonly entries = new Map<string, CacheEntry>();
   private readonly lastForced = new Map<string, number>();
+  private readonly failedAt = new Map<string, number>();
   private readonly inflight = new Map<string, Promise<number>>();
   private readonly staleMaxMs: number;
   private readonly forceIntervalMs: number;
+  private readonly failureBackoffMs: number;
+  private readonly budget: TokenBucket | null;
 
   constructor(private readonly provider: BalanceProvider, private readonly opts: BalanceCacheOptions) {
     this.staleMaxMs = opts.staleMaxMs ?? 5 * 60_000;
     this.forceIntervalMs = opts.forceIntervalMs ?? 10_000;
+    this.failureBackoffMs = opts.failureBackoffMs ?? 30_000;
+    const rate = opts.maxCallsPerSecond;
+    this.budget = rate ? new TokenBucket(rate, Math.max(1, 2 * rate), opts.now) : null;
   }
 
   /** Last known balance, without any I/O. */
@@ -113,7 +148,8 @@ export class BalanceCache {
 
   /**
    * Balance to use now: the cached value while fresh, otherwise a refreshed one.
-   * If the provider fails, a value younger than `staleMaxMs` is used instead.
+   * If the provider fails (or is not asked: backoff, budget), a value younger
+   * than `staleMaxMs` is used instead.
    * @throws BalanceUnavailableError when no usable value exists
    */
   async get(wallet: string, force = false): Promise<number> {
@@ -141,6 +177,9 @@ export class BalanceCache {
     for (const [wallet, at] of this.lastForced) {
       if (at < cutoff) this.lastForced.delete(wallet);
     }
+    for (const [wallet, at] of this.failedAt) {
+      if (this.opts.now() - at >= this.failureBackoffMs) this.failedAt.delete(wallet);
+    }
   }
 
   /** True if a forced refresh was asked for and is allowed now (at most once per forceIntervalMs). */
@@ -153,20 +192,31 @@ export class BalanceCache {
     return true;
   }
 
-  /** One provider call per wallet at a time; concurrent callers share it. */
+  /** One provider call per wallet at a time (concurrent callers share it), within the backoff and the budget. */
   private refresh(wallet: string): Promise<number> {
-    let pending = this.inflight.get(wallet);
-    if (!pending) {
-      pending = this.provider
-        .fetchBalance(wallet)
-        .then((balance) => {
+    const pending = this.inflight.get(wallet);
+    if (pending) return pending;
+    const failedAt = this.failedAt.get(wallet);
+    if (failedAt !== undefined && this.opts.now() - failedAt < this.failureBackoffMs) {
+      return Promise.reject(new Error('the last balance read failed, retrying later'));
+    }
+    if (this.budget && !this.budget.take()) return Promise.reject(new Error('too many balance reads right now'));
+    const call = this.provider
+      .fetchBalance(wallet)
+      .then(
+        (balance) => {
+          this.failedAt.delete(wallet);
           this.store(wallet, balance);
           return balance;
-        })
-        .finally(() => this.inflight.delete(wallet));
-      this.inflight.set(wallet, pending);
-    }
-    return pending;
+        },
+        (err: unknown) => {
+          this.failedAt.set(wallet, this.opts.now());
+          throw err;
+        },
+      )
+      .finally(() => this.inflight.delete(wallet));
+    this.inflight.set(wallet, call);
+    return call;
   }
 
   private store(wallet: string, balance: number): void {

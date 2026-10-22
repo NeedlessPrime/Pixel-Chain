@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  BalanceCache, BalanceUnavailableError, MockBalances, RpcBalances, sumTokenAccounts, type BalanceProvider,
+  BalanceCache, BalanceUnavailableError, MockBalances, RpcBalances, TokenBucket, sumTokenAccounts, type BalanceProvider,
 } from './balances';
 import { fakeClock, newWallet } from './test-helpers';
 
@@ -82,6 +82,79 @@ describe('BalanceCache', () => {
     provider.value = 8;
     await cache.get(wallet);
     expect(onChange).toHaveBeenCalledWith(wallet);
+  });
+});
+
+describe('BalanceCache protects the RPC', () => {
+  it('does not ask again for 30 s after a failure, serving the stale value meanwhile', async () => {
+    const clock = fakeClock();
+    const provider = scripted();
+    const cache = new BalanceCache(provider, { ttlMs: 30_000, now: clock.now });
+    provider.value = 50;
+    await cache.get(wallet);
+    clock.advance(30_000);
+    provider.failing = true;
+    for (let i = 0; i < 5; i++) {
+      expect(await cache.get(wallet)).toBe(50);
+      clock.advance(2_000);
+    }
+    expect(provider.calls).toBe(2);
+    clock.advance(20_000);
+    provider.failing = false;
+    provider.value = 60;
+    expect(await cache.get(wallet)).toBe(60);
+    expect(provider.calls).toBe(3);
+  });
+
+  it('answers unavailable at once during the backoff when nothing usable is cached', async () => {
+    const clock = fakeClock();
+    const provider = scripted();
+    provider.failing = true;
+    const cache = new BalanceCache(provider, { ttlMs: 30_000, now: clock.now });
+    await expect(cache.get(wallet)).rejects.toBeInstanceOf(BalanceUnavailableError);
+    await expect(cache.get(wallet, true)).rejects.toBeInstanceOf(BalanceUnavailableError);
+    expect(provider.calls).toBe(1);
+    clock.advance(30_000);
+    await expect(cache.get(wallet)).rejects.toBeInstanceOf(BalanceUnavailableError);
+    expect(provider.calls).toBe(2);
+  });
+
+  it('keeps provider calls within a global budget, serving stale values when it runs out', async () => {
+    const clock = fakeClock();
+    const provider = scripted();
+    const cache = new BalanceCache(provider, { ttlMs: 30_000, now: clock.now, maxCallsPerSecond: 2 });
+    const wallets = Array.from({ length: 6 }, () => newWallet().wallet);
+    const settled = await Promise.allSettled(wallets.map((w) => cache.get(w)));
+    expect(settled.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled', 'fulfilled', 'fulfilled', 'rejected', 'rejected']);
+    expect(provider.calls).toBe(4); // burst = twice the rate
+    clock.advance(1_000);
+    await cache.get(wallets[4]!);
+    await cache.get(wallets[5]!);
+    await expect(cache.get(newWallet().wallet)).rejects.toBeInstanceOf(BalanceUnavailableError);
+    expect(provider.calls).toBe(6);
+    // Out of budget, a wallet with a recent value keeps it instead of failing.
+    clock.advance(31_000);
+    for (const w of wallets) await cache.get(w);
+    expect(provider.calls).toBe(10);
+  });
+
+  it('shares one call, and one token, between concurrent readers of a wallet', async () => {
+    const provider = scripted();
+    const cache = new BalanceCache(provider, { ttlMs: 0, now: fakeClock().now, maxCallsPerSecond: 1 });
+    expect(await Promise.all([cache.get(wallet), cache.get(wallet), cache.get(wallet)])).toEqual([0, 0, 0]);
+    expect(provider.calls).toBe(1);
+  });
+});
+
+describe('TokenBucket', () => {
+  it('starts full and refills at its rate, up to the burst', () => {
+    const clock = fakeClock();
+    const bucket = new TokenBucket(2, 3, clock.now);
+    expect([bucket.take(), bucket.take(), bucket.take(), bucket.take()]).toEqual([true, true, true, false]);
+    clock.advance(500);
+    expect([bucket.take(), bucket.take()]).toEqual([true, false]);
+    clock.advance(60_000);
+    expect([bucket.take(), bucket.take(), bucket.take(), bucket.take()]).toEqual([true, true, true, false]);
   });
 });
 

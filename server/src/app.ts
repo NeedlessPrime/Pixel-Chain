@@ -88,7 +88,12 @@ export async function createApp(opts: AppOptions): Promise<PixelApp> {
   const provider = opts.balanceProvider ?? createBalanceProvider(config);
   const mock = provider instanceof MockBalances ? provider : null;
   mock?.load(loaded?.state.mockBalances);
-  const balances = new BalanceCache(provider, { ttlMs: config.balanceTtlMs, now, onChange: (w) => events.emit('me', w) });
+  const balances = new BalanceCache(provider, {
+    ttlMs: config.balanceTtlMs,
+    now,
+    maxCallsPerSecond: mock ? undefined : config.rpcMaxRps,
+    onChange: (w) => events.emit('me', w),
+  });
 
   const game = restoreGame(loaded, config, bootTime);
   game.dirty = !loaded;

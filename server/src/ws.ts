@@ -150,7 +150,7 @@ export class Hub {
     }
     client.wallet = session.wallet;
     client.sessionExpiresAt = session.expiresAt;
-    this.send(client, { t: 'authed', ok: true, me: await this.service.me(session.wallet) });
+    this.send(client, { t: 'authed', ok: true, me: await this.service.meForSocket(session.wallet) });
   }
 
   /** The socket's wallet while its session token is still valid. */

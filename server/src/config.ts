@@ -27,6 +27,8 @@ export interface ServerConfig {
   trustProxy: false | number | string;
   token: { symbol: string; mint: string | null; buyUrl: string | null };
   rpcUrl: string;
+  /** Global cap on balance RPC calls per second (bursts up to twice this). */
+  rpcMaxRps: number;
   balanceTtlMs: number;
   tiers: Tier[];
   canvasWidth: number;
@@ -191,6 +193,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
       buyUrl: str(env, 'BUY_URL') ?? (mint ? `https://pump.fun/coin/${mint}` : null),
     },
     rpcUrl: str(env, 'SOLANA_RPC_URL') ?? 'https://api.mainnet-beta.solana.com',
+    rpcMaxRps: num(env, 'RPC_MAX_RPS', 20, { min: 1, max: 10_000 }),
     balanceTtlMs: num(env, 'BALANCE_TTL_MS', 30_000, { min: 0, max: DAY_MS, integer: true }),
     tiers: parseTiers(env),
     canvasWidth: num(env, 'CANVAS_WIDTH', 200, sizeOpts),
