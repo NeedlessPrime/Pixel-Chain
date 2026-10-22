@@ -17,7 +17,7 @@ toile est figée, signée du logo $PIXEL et part au Hall of Fame avec sa timelap
 | **Fin de saison** | La toile est figée, **le logo $PIXEL est posé en bas à droite**, l'image et la timelapse partent au **Hall of Fame**, puis nouvelle saison, nouveau thème, toile vide |
 | **Factions** | Chaque joueur peut rejoindre une faction ; le classement montre qui contrôle le plus de pixels |
 | **Récompenses** | Du statut et de la visibilité. **Aucun prix en argent** (sinon c'est une loterie) |
-| **Modération** | Bouton « Signaler » pour les joueurs ; page `/admin` pour effacer une zone, bannir un wallet, gérer les saisons |
+| **Modération** | Bouton « Signaler » pour les holders ; page `/admin` pour voir qui a dessiné une zone, l'effacer, bannir un wallet, gérer les saisons |
 
 Tous ces chiffres se règlent par variables d'environnement (voir `.env.example`).
 
@@ -25,22 +25,25 @@ Tous ces chiffres se règlent par variables d'environnement (voir `.env.example`
 
 ```bash
 npm install
-cp .env.example .env          # MODE=mock, ADMIN_TOKEN=change-me
+cp .env.example .env          # sans TOKEN_MINT = mode test (soldes fictifs)
 npm run dev                   # serveur :8787 + site :5173
 ```
 
 Ouvre http://localhost:5173. En mode test, choisis **« Dev wallet (test) »** (ou
 ton vrai Phantom) et règle ton solde fictif dans le bandeau pour essayer chaque palier.
-La modération est sur http://localhost:5173/admin.html (jeton = `ADMIN_TOKEN`).
+Pour la modération, mets dans `.env` un `ADMIN_TOKEN` d'au moins 16 caractères
+(par ex. `openssl rand -hex 24`), puis ouvre http://localhost:5173/admin.html avec ce jeton.
 
 ## Passer en vrai au lancement du coin
 
 ```env
-MODE=live
-TOKEN_MINT=<adresse du mint $PIXEL>
+TOKEN_MINT=<adresse du mint $PIXEL>       # passe automatiquement en MODE=live
 SOLANA_RPC_URL=<RPC payant, ex. Helius>   # le RPC public est vite limité
-ADMIN_TOKEN=<long secret aléatoire>
+ADMIN_TOKEN=<long secret aléatoire>       # openssl rand -hex 24
 ```
+
+Ne laisse pas `MODE=mock` avec un vrai mint : n'importe qui pourrait s'attribuer
+un solde (le serveur l'affiche en gros avertissement au démarrage).
 
 Le bouton « Acheter $PIXEL » pointe automatiquement vers `https://pump.fun/coin/<mint>`.
 Pour signer les toiles avec ton propre logo, dépose un PNG à fond transparent dans
@@ -50,12 +53,22 @@ Pour signer les toiles avec ton propre logo, dépose un PNG à fond transparent 
 
 ```bash
 docker build -t pixel .
-docker run -d -p 8787:8787 -v pixel-data:/data --env-file .env pixel
+docker run -d -p 127.0.0.1:8787:8787 -v pixel-data:/data --env-file .env pixel
 ```
 
 Un seul conteneur sert le site, l'API et le temps réel (WebSocket). Tout l'état
-(toile, saisons, Hall of Fame) est dans le volume `/data`. Mets un reverse proxy
-HTTPS devant (Caddy, Nginx, Cloudflare) — les wallets exigent HTTPS.
+(toile, saisons, Hall of Fame) est dans le volume `/data` : ne mets pas de
+`DATA_DIR` dans `.env`.
+
+Mets un reverse proxy HTTPS devant (Caddy, Nginx, Cloudflare) — les wallets exigent
+HTTPS — et, derrière lui :
+
+- `TRUST_PROXY=1` dans `.env` (le nombre de proxys devant le serveur : `2` si
+  Cloudflare est devant ton Nginx), pour que les limites de requêtes voient la vraie
+  IP de chaque joueur ;
+- le port publié sur localhost seulement (`-p 127.0.0.1:8787:8787`, comme ci-dessus),
+  pour que personne ne contourne le proxy : en direct, un client pourrait choisir
+  son IP avec l'en-tête `X-Forwarded-For`.
 
 ## Structure
 
