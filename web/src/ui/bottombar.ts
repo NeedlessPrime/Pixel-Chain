@@ -1,7 +1,7 @@
 import { PALETTE } from '@pixel/shared';
 import { onTick, serverNow } from '../clock';
 import { fmtAmount, fmtCooldown, fmtInt } from '../format';
-import { minHolding, placeBlocker, type GameActions, type GameState, type Store } from '../store';
+import { buyUrl, minHolding, placeBlocker, type GameActions, type GameState, type Store } from '../store';
 import { h, setChildren, setText } from './dom';
 
 /** Not-holder call to action, palette, selected cell, report and place buttons. */
@@ -54,9 +54,11 @@ export function mountBottomBar(root: HTMLElement, store: Store<GameState>, actio
     switch (placeBlocker(s, serverNow())) {
       case 'signed_out':
         return actions.openWallet();
-      case 'not_holder':
-        if (s.config?.token.buyUrl) window.open(s.config.token.buyUrl, '_blank', 'noopener');
+      case 'not_holder': {
+        const href = buyUrl(s.config);
+        if (href) window.open(href, '_blank', 'noopener');
         return;
+      }
       default:
         actions.placeSelected();
     }
@@ -67,7 +69,7 @@ export function mountBottomBar(root: HTMLElement, store: Store<GameState>, actio
     cta.hidden = !show;
     if (!show || !s.config || !s.me) return;
     const symbol = s.config.token.symbol;
-    const buyUrl = s.config.token.buyUrl;
+    const buyHref = buyUrl(s.config);
     setChildren(
       cta,
       h(
@@ -81,7 +83,7 @@ export function mountBottomBar(root: HTMLElement, store: Store<GameState>, actio
           s.config.mode === 'mock' ? ' Mode test : règle ton solde fictif en haut.' : ' Ton solde est relu toutes les 30 s.',
         ),
       ),
-      buyUrl ? h('a', { class: 'btn btn-accent', href: buyUrl, target: '_blank', rel: 'noopener' }, `Acheter ${symbol}`) : null,
+      buyHref ? h('a', { class: 'btn btn-accent', href: buyHref, target: '_blank', rel: 'noopener' }, `Acheter ${symbol}`) : null,
     );
   }
 
@@ -111,11 +113,13 @@ export function mountBottomBar(root: HTMLElement, store: Store<GameState>, actio
         label = 'Wallet banni';
         disabled = true;
         break;
-      case 'not_holder':
+      case 'not_holder': {
         // Without a buy link (coin not launched yet) the call to action above explains what to do.
-        label = s.config?.token.buyUrl ? `Acheter ${s.config.token.symbol}` : 'Solde insuffisant';
-        disabled = !s.config?.token.buyUrl;
+        const href = buyUrl(s.config);
+        label = href ? `Acheter ${s.config!.token.symbol}` : 'Solde insuffisant';
+        disabled = !href;
         break;
+      }
       case 'cooldown': {
         const left = s.me!.nextPlaceAt - now;
         label = `⏳ ${fmtCooldown(left)}`;

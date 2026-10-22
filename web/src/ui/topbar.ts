@@ -1,7 +1,7 @@
 import { shortWallet } from '@pixel/shared';
 import { onTick } from '../clock';
 import { fmtChaos, fmtCountdown, fmtInt } from '../format';
-import type { GameActions, GameState, Store } from '../store';
+import { buyUrl, type GameActions, type GameState, type Store } from '../store';
 import { h, setText } from './dom';
 import { logo } from './logo';
 
@@ -44,9 +44,9 @@ export function mountTopBar(root: HTMLElement, store: Store<GameState>, actions:
     chaos.hidden = !(season?.status === 'live' && season.chaos.active);
     if (season) setText(chaos, `CHAOS ${fmtChaos(season.chaos.factor)}`);
 
-    const buyUrl = s.config?.token.buyUrl ?? null;
-    buy.hidden = !buyUrl;
-    if (buyUrl) buy.href = buyUrl;
+    const buyHref = buyUrl(s.config);
+    buy.hidden = !buyHref;
+    if (buyHref) buy.href = buyHref;
     buy.lastElementChild!.textContent = ` ${s.config?.token.symbol ?? '$PIXEL'}`;
 
     if (s.connection === 'online') {
