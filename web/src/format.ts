@@ -18,6 +18,9 @@ export const fmtAmount = (n: number) => decimal.format(n);
 export const fmtCompact = (n: number) => compact.format(n);
 export const fmtDate = (ms: number) => date.format(ms);
 export const fmtDateTime = (ms: number) => dateTime.format(ms);
+/** "1 pixel", "12 pixels" — French uses the singular for 0 and 1. */
+export const fmtCount = (n: number, singular: string, plural = `${singular}s`) =>
+  `${fmtInt(n)} ${Math.abs(n) < 2 ? singular : plural}`;
 
 const pad = (n: number) => String(n).padStart(2, '0');
 

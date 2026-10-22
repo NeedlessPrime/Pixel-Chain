@@ -1,6 +1,6 @@
 import { effectiveCooldownMs, normalizeFaction, shortWallet, type Leaderboard } from '@pixel/shared';
 import { onTick } from '../clock';
-import { fmtAmount, fmtCompact, fmtCooldown, fmtCountdown, fmtDelay, fmtInt } from '../format';
+import { fmtAmount, fmtCompact, fmtCooldown, fmtCount, fmtCountdown, fmtDelay, fmtInt } from '../format';
 import type { GameActions, GameState, Store } from '../store';
 import { h, setChildren, setText } from './dom';
 import { toast } from './toast';
@@ -246,7 +246,7 @@ function createLeaderboard(store: Store<GameState>) {
             row(p.wallet === me ? 'Toi' : shortWallet(p.wallet), `${fmtInt(p.pixels)} px`, p.faction ?? '', p.wallet === me),
           );
     setChildren(list, rows.length ? rows : h('li', { class: 'muted' }, tab === 'factions' ? 'Aucune faction pour l’instant.' : 'Personne n’a encore joué.'));
-    setText(totals, `${fmtInt(lb.totalPlacements)} pixels posés · ${fmtInt(lb.uniquePlayers)} joueurs cette saison`);
+    setText(totals, `${fmtCount(lb.totalPlacements, 'pixel posé', 'pixels posés')} · ${fmtCount(lb.uniquePlayers, 'joueur')} cette saison`);
   }
 
   function update(s: GameState, prev: GameState): void {

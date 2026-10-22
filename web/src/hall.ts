@@ -2,7 +2,7 @@ import './style.css';
 import './hall.css';
 import { EMPTY_COLOR, PALETTE, decodeTimelapse, shortWallet, type SeasonArchive } from '@pixel/shared';
 import { api } from './api';
-import { fmtDate, fmtInt } from './format';
+import { fmtCount, fmtDate, fmtInt } from './format';
 import { errorMessage } from './messages';
 import { TimelapsePlayer, type Speed } from './timelapse-player';
 import { $, h, setChildren, setText } from './ui/dom';
@@ -83,7 +83,7 @@ function renderGrid(): void {
             h('span', { class: 'season-num' }, `Saison ${s.number}`),
             h('h2', { class: 'season-theme' }, s.theme),
             h('p', { class: 'muted small' }, dates(s)),
-            h('p', { class: 'small' }, `${fmtInt(s.totalPlacements)} pixels · ${fmtInt(s.uniquePlayers)} joueurs`),
+            h('p', { class: 'small' }, `${fmtCount(s.totalPlacements, 'pixel')} · ${fmtCount(s.uniquePlayers, 'joueur')}`),
             h('div', { class: 'podiums' }, podium('Factions', topFactions(s, 3)), podium('Joueurs', topPlayers(s, 3))),
           ),
         ),
